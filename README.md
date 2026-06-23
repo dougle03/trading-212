@@ -71,6 +71,6 @@ Before setting up the integration, create a Trading 212 API key and secret in th
    - any other mutation or trading permission
 7. Save the generated API key and secret for use in Home Assistant.
 
-If you want screenshots, see the walkthrough in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md). 
+If you want screenshots, see the walkthrough in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md).
 
 HACS support will be hardened before public beta.
