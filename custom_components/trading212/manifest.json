@@ -1,0 +1,12 @@
+{
+  "domain": "trading212",
+  "name": "Trading 212",
+  "codeowners": ["@dougle03"],
+  "config_flow": true,
+  "documentation": "https://github.com/dougle03/trading-212",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/dougle03/trading-212/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

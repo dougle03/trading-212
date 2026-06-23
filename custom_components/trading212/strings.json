@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Trading 212",
+        "description": "Set up read-only Trading 212 account monitoring. Use a Trading 212 API token with read-only permissions.",
+        "data": {
+          "api_token": "API token",
+          "environment": "Environment",
+          "account_label": "Account label",
+          "update_interval": "Update interval in seconds"
+        }
+      }
+    },
+    "error": {
+      "auth": "The Trading 212 API token was rejected.",
+      "cannot_connect": "Unable to connect to Trading 212.",
+      "rate_limited": "Trading 212 rate limit reached. Try again later.",
+      "unknown": "Unexpected Trading 212 API error.",
+      "update_interval_too_low": "The update interval is too low."
+    },
+    "abort": {
+      "already_configured": "This Trading 212 account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "account_value": {
+        "name": "Account value"
+      },
+      "cash": {
+        "name": "Cash"
+      },
+      "free_funds": {
+        "name": "Free funds"
+      },
+      "invested": {
+        "name": "Invested"
+      },
+      "result": {
+        "name": "Result"
+      },
+      "result_percent": {
+        "name": "Result percent"
+      },
+      "open_positions": {
+        "name": "Open positions"
+      },
+      "last_update": {
+        "name": "Last update"
+      }
+    }
+  }
+}

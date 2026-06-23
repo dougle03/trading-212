@@ -1,0 +1,42 @@
+"""Diagnostics support for Trading 212."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_API_TOKEN
+from homeassistant.core import HomeAssistant
+
+from .const import DOMAIN
+
+TO_REDACT = {
+    CONF_API_TOKEN,
+    "api_token",
+    "token",
+    "authorization",
+}
+
+
+async def async_get_config_entry_diagnostics(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> dict[str, Any]:
+    """Return diagnostics for a config entry with secrets redacted."""
+    stored = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    coordinator = stored.get("coordinator")
+
+    coordinator_data: dict[str, Any] = {}
+    if coordinator is not None and getattr(coordinator, "data", None):
+        coordinator_data = {
+            "has_summary": bool(coordinator.data.get("summary")),
+            "open_positions": coordinator.data.get("open_positions"),
+            "last_update": coordinator.data.get("last_update"),
+            "currency": coordinator.data.get("currency"),
+        }
+
+    return {
+        "entry": async_redact_data(entry.as_dict(), TO_REDACT),
+        "coordinator": async_redact_data(coordinator_data, TO_REDACT),
+    }
