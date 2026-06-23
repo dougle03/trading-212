@@ -2,7 +2,7 @@
 
 A Home Assistant custom integration for monitoring Trading 212 account and portfolio summary data.
 
-Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.| See [docs/ROADMAP.md](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.
+Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.|Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.
 
 ## Status
 
