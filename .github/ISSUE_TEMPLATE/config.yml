@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Home Assistant documentation
+    url: https://www.home-assistant.io/docs/
+    about: Refer to the Home Assistant docs for setup and platform guidance.
+  - name: Trading 212 API documentation
+    url: https://developer.trading212.com/
+    about: Check the Trading 212 API documentation for endpoint and permission details.

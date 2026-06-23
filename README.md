@@ -2,7 +2,7 @@
 
 A Home Assistant custom integration for monitoring Trading 212 account and portfolio summary data.
 
-Active development: ## Roadmap | See [docs/ROADMAP.md](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.
+Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.| See [docs/ROADMAP.md](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.
 
 ## Status
 
@@ -93,3 +93,11 @@ Example dashboard YAML files are included at the repository root:
 The simple example uses standard Home Assistant cards only.
 
 The advanced example expects Mushroom, stack-in-card, ApexCharts Card, and the Trading 212 logo at `/local/images/212.png`.
+
+## Issues and feature requests
+
+Use [GitHub Issues](https://github.com/dougle03/trading-212/issues) and choose the most relevant template for bug reports, read-only API data requests, dashboard examples, or feature ideas.
+
+Please do not paste API keys, API secrets, account identifiers, or sensitive financial details.
+
+Roadmap feedback is welcome, especially for read-only features that stay within the integration's entity-bloat limits and safety boundary.

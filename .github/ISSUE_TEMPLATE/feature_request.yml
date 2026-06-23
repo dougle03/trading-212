@@ -1,0 +1,59 @@
+name: Feature request
+description: Suggest a new read-only feature for the integration.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature summary
+      placeholder: Briefly describe the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      placeholder: Why would this be useful in Home Assistant?
+    validations:
+      required: true
+  - type: textarea
+    id: entities
+    attributes:
+      label: Suggested entities or sensors
+      placeholder: List the entities or sensors you would expect.
+    validations:
+      required: true
+  - type: dropdown
+    id: readonly
+    attributes:
+      label: Can this be implemented read-only?
+      options:
+        - Yes
+        - No
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: bloat
+    attributes:
+      label: Entity bloat risk
+      description: Explain whether this should stay summary-only or opt-in.
+      placeholder: Consider how many entities this could create.
+    validations:
+      required: true
+  - type: dropdown
+    id: default_or_optin
+    attributes:
+      label: Default or opt-in
+      options:
+        - Default
+        - Opt-in
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Scope check
+      options:
+        - label: I understand trading, write actions, and other account-mutating features are out of scope for this read-only integration.
+          required: true
