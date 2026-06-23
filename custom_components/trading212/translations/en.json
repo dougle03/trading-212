@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Trading 212",
-        "description": "Set up read-only Trading 212 account monitoring. Use Trading 212 API credentials with read-only permissions.",
+        "description": "Set up read-only Trading 212 account monitoring. Create credentials at https://app.trading212.com under Settings -> API (Beta) -> Generate API key, then use read-only permissions for v0.1: Account data, Metadata, and Portfolio. Leave write or trading permissions disabled.",
         "data": {
           "api_key": "API key",
           "api_secret": "API secret",

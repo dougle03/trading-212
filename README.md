@@ -53,4 +53,24 @@ See [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md) for the current m
 
 Manual summary: copy `custom_components/trading212` into your Home Assistant `custom_components` directory, then restart Home Assistant.
 
+## Creating Trading 212 API credentials
+
+Before setting up the integration, create a Trading 212 API key and secret in the Trading 212 web app:
+
+1. Sign in at [https://app.trading212.com](https://app.trading212.com).
+2. Open `Settings` -> `API (Beta)` -> `Generate API key`.
+3. Choose a key name that identifies this Home Assistant installation.
+4. Select `Unrestricted IP access` unless you have a fixed public IP and want to restrict the key to trusted outbound IPs.
+5. For v0.1, enable only the read permissions needed by the integration:
+   - `Account data`
+   - `Metadata`
+   - `Portfolio`
+6. Leave all write or trading permissions disabled, including:
+   - `Orders - Execute`
+   - `Pies - Write`
+   - any other mutation or trading permission
+7. Save the generated API key and secret for use in Home Assistant.
+
+If you want screenshots, see the walkthrough in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md). 
+
 HACS support will be hardened before public beta.
