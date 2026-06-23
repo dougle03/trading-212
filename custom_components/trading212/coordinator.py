@@ -63,6 +63,14 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not isinstance(investments, dict):
             investments = {}
 
+        cash_available = _first_number(cash, "availableToTrade")
+        cash_in_pies = _first_number(cash, "inPies") or 0
+        cash_reserved = _first_number(cash, "reservedForOrders") or 0
+
+        cash_total = None
+        if cash_available is not None:
+            cash_total = cash_available + cash_in_pies + cash_reserved
+
         invested = _first_number(investments, "totalCost")
         result = _first_number(investments, "unrealizedProfitLoss")
 
@@ -74,8 +82,8 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "summary": summary,
             "positions": positions,
             "account_value": _first_number(summary, "totalValue"),
-            "cash": _first_number(cash, "availableToTrade"),
-            "free_funds": _first_number(cash, "availableToTrade"),
+            "cash": cash_total,
+            "free_funds": cash_available,
             "invested": invested,
             "result": result,
             "result_percent": result_percent,

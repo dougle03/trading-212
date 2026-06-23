@@ -64,7 +64,7 @@ class Trading212Client:
         """Return open positions."""
         data = await self._get_json("/equity/positions")
         if not isinstance(data, list):
-            raise Trading212Error("Unexpected portfolio response")
+            raise Trading212Error("Unexpected positions response")
         return [item for item in data if isinstance(item, dict)]
 
     async def fetch_account_data(self) -> dict[str, Any]:
