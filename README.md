@@ -49,6 +49,8 @@ Per-position entities are intentionally not created by default in v0.1 to avoid 
 
 ## Installation during development
 
-Copy or symlink `custom_components/trading212` into your Home Assistant `custom_components` directory, then restart Home Assistant.
+See [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md) for the current manual development install steps.
+
+Manual summary: copy `custom_components/trading212` into your Home Assistant `custom_components` directory, then restart Home Assistant.
 
 HACS support will be hardened before public beta.
