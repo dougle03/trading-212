@@ -4,13 +4,13 @@ A Home Assistant custom integration for monitoring Trading 212 account and portf
 
 ## Status
 
-Early development. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
+Public beta release `2026.06.1`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
 
-Version `0.1.0` is intended to be strictly read-only.
+This integration is intended to remain strictly read-only.
 
 ## Safety boundary
 
-This integration is designed to be read-only for the initial release.
+This integration is designed to be read-only for the public beta release.
 
 It must not include:
 
@@ -25,7 +25,13 @@ It must not include:
 
 Users should create a Trading 212 API key and API secret with read-only permissions, but this integration also enforces read-only behaviour by architecture.
 
-## Planned v0.1 scope
+This project is not affiliated with, endorsed by, or supported by Trading 212.
+
+Use read-only API permissions only.
+
+API credentials are stored by Home Assistant as config entry data and are redacted from diagnostics.
+
+## Public beta scope
 
 - HACS-compatible custom integration
 - Home Assistant config flow
@@ -45,7 +51,7 @@ Users should create a Trading 212 API key and API secret with read-only permissi
 - Open positions
 - Last update
 
-Per-position entities are intentionally not created by default in v0.1 to avoid entity explosion.
+Per-position entities are intentionally not created by default in public beta to avoid entity explosion.
 
 ## Installation during development
 
@@ -61,7 +67,7 @@ Before setting up the integration, create a Trading 212 API key and secret in th
 2. Open `Settings` -> `API (Beta)` -> `Generate API key`.
 3. Choose a key name that identifies this Home Assistant installation.
 4. Select `Unrestricted IP access` unless you have a fixed public IP and want to restrict the key to trusted outbound IPs.
-5. For v0.1, enable only the read permissions needed by the integration:
+5. For public beta, enable only the read permissions needed by the integration:
    - `Account data`
    - `Metadata`
    - `Portfolio`
@@ -73,4 +79,4 @@ Before setting up the integration, create a Trading 212 API key and secret in th
 
 If you want screenshots, see the walkthrough in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md).
 
-HACS support will be hardened before public beta.
+HACS support is included for the public beta release.
