@@ -4,13 +4,13 @@ A Home Assistant custom integration for monitoring Trading 212 account and portf
 
 ## Status
 
-Public beta release `2026.06.1`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
+Current public release `2026.06.2`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
 
 This integration is intended to remain strictly read-only.
 
 ## Safety boundary
 
-This integration is designed to be read-only for the public beta release.
+This integration is designed to be read-only for the public release.
 
 It must not include:
 
@@ -31,7 +31,7 @@ Use read-only API permissions only.
 
 API credentials are stored by Home Assistant as config entry data and are redacted from diagnostics.
 
-## Public beta scope
+## Public release scope
 
 - HACS-compatible custom integration
 - Home Assistant config flow
@@ -51,7 +51,7 @@ API credentials are stored by Home Assistant as config entry data and are redact
 - Open positions
 - Last update
 
-Per-position entities are intentionally not created by default in public beta to avoid entity explosion.
+Per-position entities are intentionally not created by default to avoid entity explosion.
 
 ## Installation during development
 
@@ -67,7 +67,7 @@ Before setting up the integration, create a Trading 212 API key and secret in th
 2. Open `Settings` -> `API (Beta)` -> `Generate API key`.
 3. Choose a key name that identifies this Home Assistant installation.
 4. Select `Unrestricted IP access` unless you have a fixed public IP and want to restrict the key to trusted outbound IPs.
-5. For public beta, enable only the read permissions needed by the integration:
+5. Enable only the read permissions needed by the integration:
    - `Account data`
    - `Metadata`
    - `Portfolio`
@@ -79,4 +79,15 @@ Before setting up the integration, create a Trading 212 API key and secret in th
 
 If you want screenshots, see the walkthrough in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md).
 
-HACS support is included for the public beta release.
+HACS support is included for the public release.
+
+## Dashboard examples
+
+Example dashboard YAML files are included at the repository root:
+
+- [simple-dashboard-card.yaml](simple-dashboard-card.yaml)
+- [advanced_dashboard_card.yaml](advanced_dashboard_card.yaml)
+
+The simple example uses standard Home Assistant cards only.
+
+The advanced example expects Mushroom, stack-in-card, ApexCharts Card, and the Trading 212 logo at `/local/images/212.png`.
