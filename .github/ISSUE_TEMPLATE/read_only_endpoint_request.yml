@@ -55,6 +55,7 @@ body:
     validations:
       required: true
   - type: checkboxes
+    id: scope_check
     attributes:
       label: Scope check
       options:

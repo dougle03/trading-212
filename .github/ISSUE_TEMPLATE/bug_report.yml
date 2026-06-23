@@ -78,6 +78,7 @@ body:
     validations:
       required: true
   - type: checkboxes
+    id: safety_check
     attributes:
       label: Safety check
       options:
