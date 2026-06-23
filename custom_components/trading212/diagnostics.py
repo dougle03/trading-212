@@ -9,10 +9,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_TOKEN
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import CONF_API_KEY, CONF_API_SECRET, DOMAIN
 
 TO_REDACT = {
+    CONF_API_KEY,
+    CONF_API_SECRET,
     CONF_API_TOKEN,
+    "api_key",
+    "api_secret",
     "api_token",
     "token",
     "authorization",

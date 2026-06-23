@@ -9,7 +9,6 @@ from aiohttp import ClientSession
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_API_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -22,6 +21,8 @@ from .api import (
 )
 from .const import (
     CONF_ACCOUNT_LABEL,
+    CONF_API_KEY,
+    CONF_API_SECRET,
     CONF_ENVIRONMENT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_ACCOUNT_LABEL,
@@ -59,7 +60,8 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await _validate_input(
                         hass=self.hass,
                         session=async_get_clientsession(self.hass),
-                        api_token=user_input[CONF_API_TOKEN],
+                        api_key=user_input[CONF_API_KEY],
+                        api_secret=user_input[CONF_API_SECRET],
                         environment=environment,
                     )
                 except Trading212AuthError:
@@ -82,7 +84,8 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_create_entry(
                         title=account_label,
                         data={
-                            CONF_API_TOKEN: user_input[CONF_API_TOKEN],
+                            CONF_API_KEY: user_input[CONF_API_KEY],
+                            CONF_API_SECRET: user_input[CONF_API_SECRET],
                             CONF_ENVIRONMENT: environment,
                             CONF_ACCOUNT_LABEL: account_label,
                             CONF_UPDATE_INTERVAL: update_interval,
@@ -99,13 +102,15 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 async def _validate_input(
     hass: HomeAssistant,
     session: ClientSession,
-    api_token: str,
+    api_key: str,
+    api_secret: str,
     environment: str,
 ) -> None:
-    """Validate the user's Trading 212 token by fetching account summary."""
+    """Validate the user's Trading 212 credentials by fetching account summary."""
     client = Trading212Client(
         session=session,
-        api_token=api_token,
+        api_key=api_key,
+        api_secret=api_secret,
         environment=environment,
     )
     await client.get_account_summary()
@@ -118,8 +123,12 @@ def _user_schema(user_input: dict[str, Any] | None = None) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(
-                CONF_API_TOKEN,
-                default=suggested.get(CONF_API_TOKEN, ""),
+                CONF_API_KEY,
+                default=suggested.get(CONF_API_KEY, ""),
+            ): str,
+            vol.Required(
+                CONF_API_SECRET,
+                default=suggested.get(CONF_API_SECRET, ""),
             ): str,
             vol.Required(
                 CONF_ENVIRONMENT,

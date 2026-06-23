@@ -9,6 +9,8 @@ DOMAIN = "trading212"
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 CONF_ACCOUNT_LABEL = "account_label"
+CONF_API_KEY = "api_key"
+CONF_API_SECRET = "api_secret"
 CONF_ENVIRONMENT = "environment"
 CONF_UPDATE_INTERVAL = "update_interval"
 

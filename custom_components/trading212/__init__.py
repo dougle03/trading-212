@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_TOKEN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import Trading212Client
 from .const import (
+    CONF_API_KEY,
+    CONF_API_SECRET,
     CONF_ENVIRONMENT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
@@ -16,7 +17,6 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import Trading212DataUpdateCoordinator
-
 
 
 async def async_setup_entry(
@@ -28,7 +28,8 @@ async def async_setup_entry(
 
     client = Trading212Client(
         session=async_get_clientsession(hass),
-        api_token=str(entry.data[CONF_API_TOKEN]),
+        api_key=str(entry.data[CONF_API_KEY]),
+        api_secret=str(entry.data[CONF_API_SECRET]),
         environment=str(entry.data[CONF_ENVIRONMENT]),
     )
 

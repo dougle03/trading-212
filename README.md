@@ -23,7 +23,7 @@ It must not include:
 - Home Assistant buttons, selects, switches, or controls that change account state
 - generic raw API endpoint helpers
 
-Users should create a Trading 212 API token with read-only permissions, but this integration also enforces read-only behaviour by architecture.
+Users should create a Trading 212 API key and API secret with read-only permissions, but this integration also enforces read-only behaviour by architecture.
 
 ## Planned v0.1 scope
 

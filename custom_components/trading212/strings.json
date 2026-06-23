@@ -3,9 +3,10 @@
     "step": {
       "user": {
         "title": "Trading 212",
-        "description": "Set up read-only Trading 212 account monitoring. Use a Trading 212 API token with read-only permissions.",
+        "description": "Set up read-only Trading 212 account monitoring. Use Trading 212 API credentials with read-only permissions.",
         "data": {
-          "api_token": "API token",
+          "api_key": "API key",
+          "api_secret": "API secret",
           "environment": "Environment",
           "account_label": "Account label",
           "update_interval": "Update interval in seconds"
@@ -13,7 +14,7 @@
       }
     },
     "error": {
-      "auth": "The Trading 212 API token was rejected.",
+      "auth": "The Trading 212 API credentials were rejected.",
       "cannot_connect": "Unable to connect to Trading 212.",
       "rate_limited": "Trading 212 rate limit reached. Try again later.",
       "unknown": "Unexpected Trading 212 API error.",
