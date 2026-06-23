@@ -2,6 +2,8 @@
 
 A Home Assistant custom integration for monitoring Trading 212 account and portfolio summary data.
 
+Active development: ## Roadmap | See [docs/ROADMAP.md](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.
+
 ## Status
 
 Current public release `2026.06.2`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
