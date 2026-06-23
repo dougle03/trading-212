@@ -76,7 +76,16 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         result_percent = None
         if invested not in (None, 0) and result is not None:
-            result_percent = (result / invested) * 100
+            result_percent = round((result / invested) * 100, 2)
+
+        if cash_total is not None:
+            cash_total = round(cash_total, 2)
+        if cash_available is not None:
+            cash_available = round(cash_available, 2)
+        if invested is not None:
+            invested = round(invested, 2)
+        if result is not None:
+            result = round(result, 2)
 
         return {
             "summary": summary,

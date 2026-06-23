@@ -4,7 +4,7 @@ A Home Assistant custom integration for monitoring Trading 212 account and portf
 
 ## Status
 
-Early development.
+Early development. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
 
 Version `0.1.0` is intended to be strictly read-only.
 
