@@ -55,28 +55,32 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         summary = raw_data.get("summary", {})
         positions = raw_data.get("positions", [])
 
+        cash = summary.get("cash", {})
+        if not isinstance(cash, dict):
+            cash = {}
+
+        investments = summary.get("investments", {})
+        if not isinstance(investments, dict):
+            investments = {}
+
+        invested = _first_number(investments, "totalCost")
+        result = _first_number(investments, "unrealizedProfitLoss")
+
+        result_percent = None
+        if invested not in (None, 0) and result is not None:
+            result_percent = (result / invested) * 100
+
         return {
             "summary": summary,
             "positions": positions,
-            "account_value": _first_number(
-                summary,
-                "total",
-                "accountValue",
-                "value",
-                "totalValue",
-            ),
-            "cash": _first_number(summary, "cash", "cashAvailableForWithdrawal"),
-            "free_funds": _first_number(summary, "freeFunds", "availableFunds"),
-            "invested": _first_number(summary, "invested", "investedCapital"),
-            "result": _first_number(summary, "result", "ppl", "profitLoss"),
-            "result_percent": _first_number(
-                summary,
-                "resultCoef",
-                "resultPercent",
-                "profitLossPercentage",
-            ),
+            "account_value": _first_number(summary, "totalValue"),
+            "cash": _first_number(cash, "availableToTrade"),
+            "free_funds": _first_number(cash, "availableToTrade"),
+            "invested": invested,
+            "result": result,
+            "result_percent": result_percent,
             "open_positions": len(positions),
-            "currency": _first_string(summary, "currencyCode", "currency") or "GBP",
+            "currency": _first_string(summary, "currency") or "GBP",
             "last_update": dt_util.utcnow(),
         }
 

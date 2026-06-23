@@ -61,8 +61,8 @@ class Trading212Client:
         return data
 
     async def get_positions(self) -> list[dict[str, Any]]:
-        """Return open portfolio positions."""
-        data = await self._get_json("/equity/portfolio")
+        """Return open positions."""
+        data = await self._get_json("/equity/positions")
         if not isinstance(data, list):
             raise Trading212Error("Unexpected portfolio response")
         return [item for item in data if isinstance(item, dict)]
