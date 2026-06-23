@@ -28,9 +28,9 @@ body:
     attributes:
       label: Can this be implemented read-only?
       options:
-        - Yes
-        - No
-        - Not sure
+        - "Yes"
+        - "No"
+        - "Not sure"
     validations:
       required: true
   - type: textarea
@@ -48,7 +48,7 @@ body:
       options:
         - Default
         - Opt-in
-        - Not sure
+        - "Not sure"
     validations:
       required: true
   - type: checkboxes

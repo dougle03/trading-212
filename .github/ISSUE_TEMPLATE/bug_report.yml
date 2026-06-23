@@ -72,9 +72,9 @@ body:
     attributes:
       label: Did this start after an update?
       options:
-        - Yes
-        - No
-        - Not sure
+        - "Yes"
+        - "No"
+        - "Not sure"
     validations:
       required: true
   - type: checkboxes
