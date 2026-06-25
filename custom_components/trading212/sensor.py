@@ -26,6 +26,7 @@ class Trading212SensorEntityDescription(SensorEntityDescription):
     """Trading 212 sensor description."""
 
     value_key: str
+    attributes_key: str | None = None
 
 
 SENSOR_DESCRIPTIONS: tuple[Trading212SensorEntityDescription, ...] = (
@@ -76,6 +77,46 @@ SENSOR_DESCRIPTIONS: tuple[Trading212SensorEntityDescription, ...] = (
         translation_key="open_positions",
         value_key="open_positions",
         state_class=SensorStateClass.MEASUREMENT,
+    ),
+    Trading212SensorEntityDescription(
+        key="daily_gain_loss",
+        translation_key="daily_gain_loss",
+        value_key="daily_gain_loss",
+        attributes_key="daily_gain_loss_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    Trading212SensorEntityDescription(
+        key="daily_gain_loss_percent",
+        translation_key="daily_gain_loss_percent",
+        value_key="daily_gain_loss_percent",
+        attributes_key="daily_gain_loss_percent_attrs",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    Trading212SensorEntityDescription(
+        key="top_daily_mover",
+        translation_key="top_daily_mover",
+        value_key="top_daily_mover",
+        attributes_key="top_daily_mover_attrs",
+    ),
+    Trading212SensorEntityDescription(
+        key="bottom_daily_mover",
+        translation_key="bottom_daily_mover",
+        value_key="bottom_daily_mover",
+        attributes_key="bottom_daily_mover_attrs",
+    ),
+    Trading212SensorEntityDescription(
+        key="biggest_daily_gain_value",
+        translation_key="biggest_daily_gain_value",
+        value_key="biggest_daily_gain_value",
+        attributes_key="biggest_daily_gain_value_attrs",
+    ),
+    Trading212SensorEntityDescription(
+        key="biggest_daily_loss_value",
+        translation_key="biggest_daily_loss_value",
+        value_key="biggest_daily_loss_value",
+        attributes_key="biggest_daily_loss_value_attrs",
     ),
     Trading212SensorEntityDescription(
         key="last_update",
@@ -146,4 +187,15 @@ class Trading212Sensor(CoordinatorEntity[Trading212DataUpdateCoordinator], Senso
             if isinstance(currency, str) and currency:
                 return currency
 
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return sensor attributes."""
+        attributes_key = self.entity_description.attributes_key
+        if attributes_key is None:
+            return None
+        attributes = self.coordinator.data.get(attributes_key)
+        if isinstance(attributes, dict):
+            return attributes
         return None

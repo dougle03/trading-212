@@ -36,11 +36,13 @@ async def async_setup_entry(
     coordinator = Trading212DataUpdateCoordinator(
         hass=hass,
         client=client,
+        entry_id=entry.entry_id,
         update_interval_seconds=int(
             entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         ),
     )
 
+    await coordinator.async_initialize()
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {

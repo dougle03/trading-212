@@ -5,6 +5,8 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "trading212"
+STORAGE_VERSION = 1
+STORAGE_KEY_PREFIX = "trading212_daily_baseline"
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 

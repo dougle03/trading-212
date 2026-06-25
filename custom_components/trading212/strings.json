@@ -47,6 +47,24 @@
       "open_positions": {
         "name": "Open positions"
       },
+      "daily_gain_loss": {
+        "name": "Daily gain/loss"
+      },
+      "daily_gain_loss_percent": {
+        "name": "Daily gain/loss percent"
+      },
+      "top_daily_mover": {
+        "name": "Top daily mover"
+      },
+      "bottom_daily_mover": {
+        "name": "Bottom daily mover"
+      },
+      "biggest_daily_gain_value": {
+        "name": "Biggest daily gain value"
+      },
+      "biggest_daily_loss_value": {
+        "name": "Biggest daily loss value"
+      },
       "last_update": {
         "name": "Last update"
       }

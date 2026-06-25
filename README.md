@@ -6,7 +6,7 @@ Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only fea
 
 ## Status
 
-Current public release `2026.06.2`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
+Current public release `2026.06.3`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
 
 This integration is intended to remain strictly read-only.
 
@@ -51,9 +51,17 @@ API credentials are stored by Home Assistant as config entry data and are redact
 - Result
 - Result percent
 - Open positions
+- Daily gain/loss
+- Daily gain/loss percent
+- Top daily mover
+- Bottom daily mover
+- Biggest daily gain value
+- Biggest daily loss value
 - Last update
 
 Per-position entities are intentionally not created by default to avoid entity explosion.
+
+Daily movement is calculated from the integration's local Home Assistant day baseline, not Trading 212's official market-day performance figures.
 
 ## Installation during development
 
@@ -89,10 +97,13 @@ Example dashboard YAML files are included at the repository root:
 
 - [simple-dashboard-card.yaml](simple-dashboard-card.yaml)
 - [advanced_dashboard_card.yaml](advanced_dashboard_card.yaml)
+- [daily_movement_dashboard_card.yaml](daily_movement_dashboard_card.yaml)
 
 The simple example uses standard Home Assistant cards only.
 
 The advanced example expects Mushroom, stack-in-card, ApexCharts Card, and the Trading 212 logo at `/local/images/212.png`.
+
+The daily movement example expects Mushroom and stack-in-card and focuses on the new daily baseline summary sensors.
 
 ## Issues and feature requests
 
