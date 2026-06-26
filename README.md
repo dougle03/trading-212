@@ -6,7 +6,7 @@ Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only fea
 
 ## Status
 
-Current public release `2026.06.5`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
+Current public release `2026.06.6`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
 
 This integration is intended to remain strictly read-only.
 
