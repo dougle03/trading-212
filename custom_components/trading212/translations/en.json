@@ -15,6 +15,7 @@
     },
     "error": {
       "auth": "The Trading 212 API credentials were rejected.",
+      "account_label_required": "Add a clear account label for additional Trading 212 accounts.",
       "cannot_connect": "Unable to connect to Trading 212.",
       "rate_limited": "Trading 212 rate limit reached. Try again later.",
       "unknown": "Unexpected Trading 212 API error.",

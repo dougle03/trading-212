@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -47,17 +48,20 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+        require_account_label = bool(self._async_current_entries())
 
         if user_input is not None:
             environment = user_input[CONF_ENVIRONMENT]
-            account_label = user_input[CONF_ACCOUNT_LABEL].strip()
+            account_label = _normalise_account_label(user_input.get(CONF_ACCOUNT_LABEL))
             update_interval = int(user_input[CONF_UPDATE_INTERVAL])
 
-            if update_interval < MIN_UPDATE_INTERVAL:
+            if require_account_label and account_label is None:
+                errors[CONF_ACCOUNT_LABEL] = "account_label_required"
+            elif update_interval < MIN_UPDATE_INTERVAL:
                 errors[CONF_UPDATE_INTERVAL] = "update_interval_too_low"
             else:
                 try:
-                    await _validate_input(
+                    summary = await _validate_input(
                         hass=self.hass,
                         session=async_get_clientsession(self.hass),
                         api_key=user_input[CONF_API_KEY],
@@ -76,25 +80,34 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.exception("Unexpected Trading 212 config flow error")
                     errors["base"] = "unknown"
                 else:
+                    account_identifier = _account_identifier_from_summary(
+                        summary,
+                        api_key=user_input[CONF_API_KEY],
+                        api_secret=user_input[CONF_API_SECRET],
+                        environment=environment,
+                    )
                     await self.async_set_unique_id(
-                        f"{DOMAIN}_{environment}_{account_label.lower()}"
+                        f"{DOMAIN}_{environment}_{account_identifier}"
                     )
                     self._abort_if_unique_id_configured()
 
+                    data = {
+                        CONF_API_KEY: user_input[CONF_API_KEY],
+                        CONF_API_SECRET: user_input[CONF_API_SECRET],
+                        CONF_ENVIRONMENT: environment,
+                        CONF_UPDATE_INTERVAL: update_interval,
+                    }
+                    if account_label is not None:
+                        data[CONF_ACCOUNT_LABEL] = account_label
+
                     return self.async_create_entry(
-                        title=account_label,
-                        data={
-                            CONF_API_KEY: user_input[CONF_API_KEY],
-                            CONF_API_SECRET: user_input[CONF_API_SECRET],
-                            CONF_ENVIRONMENT: environment,
-                            CONF_ACCOUNT_LABEL: account_label,
-                            CONF_UPDATE_INTERVAL: update_interval,
-                        },
+                        title=account_label or DEFAULT_ACCOUNT_LABEL,
+                        data=data,
                     )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_user_schema(user_input),
+            data_schema=_user_schema(user_input, require_account_label),
             errors=errors,
         )
 
@@ -105,7 +118,7 @@ async def _validate_input(
     api_key: str,
     api_secret: str,
     environment: str,
-) -> None:
+) -> dict[str, Any]:
     """Validate the user's Trading 212 credentials by fetching account summary."""
     client = Trading212Client(
         session=session,
@@ -113,34 +126,85 @@ async def _validate_input(
         api_secret=api_secret,
         environment=environment,
     )
-    await client.get_account_summary()
+    return await client.get_account_summary()
 
 
-def _user_schema(user_input: dict[str, Any] | None = None) -> vol.Schema:
+def _user_schema(
+    user_input: dict[str, Any] | None = None,
+    require_account_label: bool = False,
+) -> vol.Schema:
     """Return the config flow user schema."""
     suggested = user_input or {}
+    schema: dict[Any, Any] = {
+        vol.Required(
+            CONF_API_KEY,
+            default=suggested.get(CONF_API_KEY, ""),
+        ): str,
+        vol.Required(
+            CONF_API_SECRET,
+            default=suggested.get(CONF_API_SECRET, ""),
+        ): str,
+        vol.Required(
+            CONF_ENVIRONMENT,
+            default=suggested.get(CONF_ENVIRONMENT, DEFAULT_ENVIRONMENT),
+        ): vol.In(list(ENVIRONMENT_URLS)),
+        vol.Required(
+            CONF_UPDATE_INTERVAL,
+            default=suggested.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+        ): vol.All(vol.Coerce(int), vol.Range(min=MIN_UPDATE_INTERVAL)),
+    }
 
-    return vol.Schema(
-        {
-            vol.Required(
-                CONF_API_KEY,
-                default=suggested.get(CONF_API_KEY, ""),
-            ): str,
-            vol.Required(
-                CONF_API_SECRET,
-                default=suggested.get(CONF_API_SECRET, ""),
-            ): str,
-            vol.Required(
-                CONF_ENVIRONMENT,
-                default=suggested.get(CONF_ENVIRONMENT, DEFAULT_ENVIRONMENT),
-            ): vol.In(list(ENVIRONMENT_URLS)),
+    if require_account_label:
+        schema[
             vol.Required(
                 CONF_ACCOUNT_LABEL,
-                default=suggested.get(CONF_ACCOUNT_LABEL, DEFAULT_ACCOUNT_LABEL),
-            ): str,
-            vol.Required(
-                CONF_UPDATE_INTERVAL,
-                default=suggested.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_UPDATE_INTERVAL)),
-        }
+                default=suggested.get(CONF_ACCOUNT_LABEL, ""),
+            )
+        ] = str
+
+    return vol.Schema(schema)
+
+
+def _normalise_account_label(value: Any) -> str | None:
+    """Return a cleaned optional account label."""
+    if not isinstance(value, str):
+        return None
+
+    label = value.strip()
+    if not label or label.casefold() == DEFAULT_ACCOUNT_LABEL.casefold():
+        return None
+
+    return label
+
+
+def _account_identifier_from_summary(
+    summary: dict[str, Any],
+    *,
+    api_key: str,
+    api_secret: str,
+    environment: str,
+) -> str:
+    """Return a stable duplicate-detection key for the account."""
+    for key in ("accountId", "account_id", "id", "accountCode", "account_code"):
+        value = summary.get(key)
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value).strip()
+
+    return _credentials_fingerprint(
+        api_key=api_key,
+        api_secret=api_secret,
+        environment=environment,
     )
+
+
+def _credentials_fingerprint(
+    *,
+    api_key: str,
+    api_secret: str,
+    environment: str,
+) -> str:
+    """Return a non-reversible fallback identifier when the API exposes no account ID."""
+    digest = hashlib.sha256(
+        f"{environment}\0{api_key}\0{api_secret}".encode("utf-8")
+    ).hexdigest()
+    return f"credentials_{digest[:16]}"

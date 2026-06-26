@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_ACCOUNT_LABEL, DOMAIN
+from .const import CONF_ACCOUNT_LABEL, DEFAULT_ACCOUNT_LABEL, DOMAIN
 from .coordinator import Trading212DataUpdateCoordinator
 
 
@@ -139,7 +139,7 @@ async def async_setup_entry(
 
     account_label = entry.data.get(CONF_ACCOUNT_LABEL) or entry.data.get(CONF_NAME)
     if not isinstance(account_label, str) or not account_label.strip():
-        account_label = "Trading 212"
+        account_label = DEFAULT_ACCOUNT_LABEL
 
     async_add_entities(
         Trading212Sensor(coordinator, entry, account_label, description)
