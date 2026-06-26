@@ -10,6 +10,8 @@ Current public release `2026.06.5`. Initial Home Assistant smoke test has passed
 
 This integration is intended to remain strictly read-only.
 
+The project version tracks the full project history, including internal tooling and documentation changes. Public GitHub releases may occasionally skip intermediate versions where those versions were internal-only updates.
+
 ## Safety boundary
 
 This integration is designed to be read-only for the public release.
@@ -68,6 +70,36 @@ Daily movement is calculated from the integration's local Home Assistant day bas
 See [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md) for the current manual development install steps.
 
 Manual summary: copy `custom_components/trading212` into your Home Assistant `custom_components` directory, then restart Home Assistant.
+
+## Install with HACS
+
+Until this integration is listed in the default HACS store, add it as a custom repository:
+
+1. Open Home Assistant.
+2. Open HACS.
+3. Select the three-dot menu in the top-right corner.
+4. Select **Custom repositories**.
+5. Add this repository URL:
+
+   `https://github.com/dougle03/trading-212`
+
+6. Select category **Integration**.
+7. Select **Add**.
+8. Install **Trading 212** from HACS.
+9. Restart Home Assistant.
+10. Go to **Settings -> Devices & services -> Add integration** and search for **Trading 212**.
+
+This integration is being prepared for submission to the default HACS repository list. Once accepted, users will be able to find it directly in HACS without adding a custom repository URL.
+
+This integration is strictly read-only. It does not place trades, cancel orders, edit pies, or expose account-changing Home Assistant services, buttons, switches, or selects.
+
+## Manual installation
+
+If you prefer not to use HACS yet, or want a fallback path:
+
+1. Copy `custom_components/trading212` into your Home Assistant `custom_components` directory.
+2. Restart Home Assistant.
+3. Go to **Settings -> Devices & services -> Add integration** and search for **Trading 212**.
 
 ## Creating Trading 212 API credentials
 
