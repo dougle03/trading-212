@@ -29,16 +29,30 @@
     "step": {
       "init": {
         "title": "Trading 212 feature groups",
-        "description": "Control read-only feature groups. High-volume per-item entity groups are off by default.",
+        "description": "Control read-only feature groups. Per-position entities may create one entity per open holding, can create many entities for large portfolios, and may require reloading the integration for entities to appear or disappear. Pie detail fetching is paced and cached, and optional endpoint groups may temporarily cool down if Trading 212 rate limits are hit.",
         "data": {
           "account_summary": "Account summary",
           "positions_summary": "Positions summary",
           "per_position_entities": "Per-position entities",
+          "max_position_entities": "Maximum per-position entities",
+          "position_display_format": "Position display format",
           "pies_summary": "Pies summary",
           "per_pie_entities": "Per-pie entities",
           "dividends_summary": "Dividends summary",
           "orders_summary": "Orders summary",
           "movers_daily": "Movers and daily movement"
+        },
+        "data_description": {
+          "position_display_format": "Controls position entity names and position summary labels where the API provides enough data."
+        },
+        "selector": {
+          "position_display_format": {
+            "options": {
+              "name": "Instrument name",
+              "ticker": "Ticker or code",
+              "name_ticker": "Name plus ticker or code"
+            }
+          }
         }
       }
     }

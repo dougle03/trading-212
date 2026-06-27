@@ -36,11 +36,64 @@ async def async_get_config_entry_diagnostics(
         coordinator_data = {
             "has_summary": bool(coordinator.data.get("summary")),
             "open_positions": coordinator.data.get("open_positions"),
+            "pies_summary_enabled": getattr(coordinator, "feature_options", {}).get(
+                "pies_summary"
+            ),
             "pies_count": coordinator.data.get("pies_count"),
+            "pie_list_count": coordinator.data.get("pies_count_attrs", {}).get(
+                "pie_list_count"
+            )
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "pie_detail_count": coordinator.data.get("pies_count_attrs", {}).get(
+                "pie_detail_count"
+            )
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "pie_detail_pending_count": coordinator.data.get(
+                "pies_count_attrs", {}
+            ).get("pie_detail_pending_count")
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "pie_detail_attempted_this_refresh": coordinator.data.get(
+                "pies_count_attrs", {}
+            ).get("pie_detail_attempted_this_refresh")
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "pie_detail_skipped_count": coordinator.data.get(
+                "pies_count_attrs", {}
+            ).get("pie_detail_skipped_count")
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "pie_detail_skipped_due_to_pacing": coordinator.data.get(
+                "pies_count_attrs", {}
+            ).get("pie_detail_skipped_due_to_pacing")
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "pie_detail_rate_limited": coordinator.data.get(
+                "pies_count_attrs", {}
+            ).get("pie_detail_rate_limited")
+            if isinstance(coordinator.data.get("pies_count_attrs"), dict)
+            else None,
+            "position_entities_limit": coordinator.data.get("position_entities_limit"),
+            "position_entities_available": coordinator.data.get(
+                "position_entities_available"
+            ),
+            "position_entities_exposed": coordinator.data.get(
+                "position_entities_exposed"
+            ),
+            "position_entities_truncated": coordinator.data.get(
+                "position_entities_truncated"
+            ),
             "last_update": coordinator.data.get("last_update"),
             "currency": coordinator.data.get("currency"),
             "feature_options": getattr(coordinator, "feature_options", {}),
             "endpoint_groups": getattr(coordinator, "endpoint_group_status", {}),
+            "adaptive_rate_limits": getattr(
+                stored.get("client"),
+                "rate_limit_state",
+                {},
+            ),
         }
 
     return {

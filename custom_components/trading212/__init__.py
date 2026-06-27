@@ -16,6 +16,7 @@ from .const import (
     DOMAIN,
     PLATFORMS,
 )
+from .options import get_entry_options
 from .coordinator import Trading212DataUpdateCoordinator
 
 
@@ -40,7 +41,7 @@ async def async_setup_entry(
         update_interval_seconds=int(
             entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         ),
-        feature_options=dict(entry.options),
+        feature_options=get_entry_options(entry.options),
     )
 
     await coordinator.async_initialize()
@@ -52,6 +53,7 @@ async def async_setup_entry(
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await coordinator.async_start_pie_hydrator()
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
@@ -62,6 +64,11 @@ async def async_unload_entry(
     entry: ConfigEntry,
 ) -> bool:
     """Unload a Trading 212 config entry."""
+    stored = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    coordinator: Trading212DataUpdateCoordinator | None = stored.get("coordinator")
+    if coordinator is not None:
+        await coordinator.async_stop_pie_hydrator()
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:

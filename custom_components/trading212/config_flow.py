@@ -25,13 +25,17 @@ from .const import (
     CONF_API_KEY,
     CONF_API_SECRET,
     CONF_ENVIRONMENT,
+    CONF_MAX_POSITION_ENTITIES,
+    CONF_POSITION_DISPLAY_FORMAT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_ACCOUNT_LABEL,
     DEFAULT_ENVIRONMENT,
     DEFAULT_FEATURE_OPTIONS,
+    DEFAULT_MAX_POSITION_ENTITIES,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     ENVIRONMENT_URLS,
+    FEATURE_OPTION_DEFAULTS,
     FEATURE_ACCOUNT_SUMMARY,
     FEATURE_DIVIDENDS_SUMMARY,
     FEATURE_MOVERS_DAILY,
@@ -41,8 +45,12 @@ from .const import (
     FEATURE_PER_POSITION_ENTITIES,
     FEATURE_PIES_SUMMARY,
     FEATURE_POSITIONS_SUMMARY,
+    MAX_POSITION_ENTITIES,
+    MIN_POSITION_ENTITIES,
     MIN_UPDATE_INTERVAL,
+    POSITION_DISPLAY_FORMATS,
 )
+from .options import get_entry_options, merge_entry_options
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,7 +128,7 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_create_entry(
                         title=account_label or DEFAULT_ACCOUNT_LABEL,
                         data=data,
-                        options=dict(DEFAULT_FEATURE_OPTIONS),
+                        options=get_entry_options(),
                     )
 
         return self.async_show_form(
@@ -143,12 +151,12 @@ class Trading212OptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.ConfigFlowResult:
         """Manage feature options."""
         if user_input is not None:
-            options = _normalise_feature_options(user_input)
+            options = merge_entry_options(self._config_entry.options, user_input)
             return self.async_create_entry(title="", data=options)
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_options_schema(self._config_entry.options),
+            data_schema=_options_schema(get_entry_options(self._config_entry.options)),
         )
 
 
@@ -207,7 +215,7 @@ def _user_schema(
 
 def _options_schema(options: Mapping[str, Any] | None = None) -> vol.Schema:
     """Return the options flow schema."""
-    suggested = _normalise_feature_options(options)
+    suggested = get_entry_options(options)
     return vol.Schema(
         {
             vol.Required(
@@ -222,6 +230,17 @@ def _options_schema(options: Mapping[str, Any] | None = None) -> vol.Schema:
                 FEATURE_PER_POSITION_ENTITIES,
                 default=suggested[FEATURE_PER_POSITION_ENTITIES],
             ): bool,
+            vol.Required(
+                CONF_MAX_POSITION_ENTITIES,
+                default=suggested[CONF_MAX_POSITION_ENTITIES],
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_POSITION_ENTITIES, max=MAX_POSITION_ENTITIES),
+            ),
+            vol.Required(
+                CONF_POSITION_DISPLAY_FORMAT,
+                default=suggested[CONF_POSITION_DISPLAY_FORMAT],
+            ): vol.In(POSITION_DISPLAY_FORMATS),
             vol.Required(
                 FEATURE_PIES_SUMMARY,
                 default=suggested[FEATURE_PIES_SUMMARY],
@@ -246,15 +265,6 @@ def _options_schema(options: Mapping[str, Any] | None = None) -> vol.Schema:
     )
 
 
-def _normalise_feature_options(options: Any) -> dict[str, bool]:
-    """Return feature options with account summary forced on."""
-    normalised = dict(DEFAULT_FEATURE_OPTIONS)
-    if isinstance(options, dict):
-        for key in FEATURE_OPTIONS:
-            if key in options:
-                normalised[key] = bool(options[key])
-    normalised[FEATURE_ACCOUNT_SUMMARY] = True
-    return normalised
 
 
 def _normalise_account_label(value: Any) -> str | None:

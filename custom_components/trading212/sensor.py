@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_ACCOUNT_LABEL,
     DOMAIN,
     FEATURE_MOVERS_DAILY,
+    FEATURE_PER_POSITION_ENTITIES,
     FEATURE_PIES_SUMMARY,
     FEATURE_POSITIONS_SUMMARY,
 )
@@ -306,11 +307,22 @@ async def async_setup_entry(
     if not isinstance(account_label, str) or not account_label.strip():
         account_label = DEFAULT_ACCOUNT_LABEL
 
-    async_add_entities(
+    entities: list[SensorEntity] = [
         Trading212Sensor(coordinator, entry, account_label, description)
         for description in SENSOR_DESCRIPTIONS
         if _sensor_enabled(coordinator, description)
-    )
+    ]
+
+    if coordinator.feature_options.get(FEATURE_PER_POSITION_ENTITIES):
+        position_entries = coordinator.data.get("position_entities", [])
+        if isinstance(position_entries, list):
+            entities.extend(
+                Trading212PositionSensor(coordinator, entry, account_label, position)
+                for position in position_entries
+                if isinstance(position, dict) and position.get("entity_id")
+            )
+
+    async_add_entities(entities)
 
 
 def _sensor_enabled(
@@ -375,3 +387,138 @@ class Trading212Sensor(CoordinatorEntity[Trading212DataUpdateCoordinator], Senso
         if isinstance(attributes, dict):
             return attributes
         return None
+
+
+class Trading212PositionSensor(
+    CoordinatorEntity[Trading212DataUpdateCoordinator],
+    SensorEntity,
+):
+    """Optional one-entity-per-open-position sensor."""
+
+    _attr_has_entity_name = True
+    def __init__(
+        self,
+        coordinator: Trading212DataUpdateCoordinator,
+        entry: ConfigEntry,
+        account_label: str,
+        position: dict[str, Any],
+    ) -> None:
+        """Initialise the position sensor."""
+        super().__init__(coordinator)
+        self._position_id = str(position["entity_id"])
+        self._attr_unique_id = f"{entry.entry_id}_position_{self._position_id}"
+        self._attr_name = f"Position {_position_label(position)}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+            "name": account_label,
+            "manufacturer": "Trading 212",
+            "model": "Read-only API",
+        }
+
+    @property
+    def available(self) -> bool:
+        """Return whether the open position is currently present."""
+        return self._position_entry is not None
+
+    @property
+    def native_value(self) -> Any:
+        """Return current value, result, or quantity for the position."""
+        entry = self._position_entry
+        if entry is None:
+            return None
+        for key in ("value", "result", "quantity"):
+            value = entry.get(key)
+            if value is not None:
+                return value
+        return None
+
+    @property
+    def device_class(self) -> SensorDeviceClass | None:
+        """Return a monetary device class when the state is monetary."""
+        entry = self._position_entry
+        if entry is None:
+            return None
+        if entry.get("value") is not None or entry.get("result") is not None:
+            return SensorDeviceClass.MONETARY
+        return None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return currency when the state is monetary."""
+        entry = self._position_entry
+        if entry is None:
+            return None
+        if entry.get("value") is None and entry.get("result") is None:
+            return None
+        currency = entry.get("currency")
+        if isinstance(currency, str) and currency:
+            return currency
+        return None
+
+    @property
+    def state_class(self) -> SensorStateClass | None:
+        """Return a state class suited to the current state source."""
+        entry = self._position_entry
+        if entry is None:
+            return None
+        if entry.get("value") is not None or entry.get("result") is not None:
+            return SensorStateClass.TOTAL
+        if entry.get("quantity") is not None:
+            return SensorStateClass.MEASUREMENT
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return bounded position details."""
+        entry = self._position_entry
+        if entry is None:
+            return {
+                "position_id": self._position_id,
+                "status": "not_open",
+            }
+
+        state_source = "quantity"
+        if entry.get("value") is not None:
+            state_source = "value"
+        elif entry.get("result") is not None:
+            state_source = "result"
+
+        return {
+            "position_id": self._position_id,
+            "status": "open",
+            "state_source": state_source,
+            "ticker": entry.get("ticker"),
+            "name": entry.get("name"),
+            "isin": entry.get("isin"),
+            "instrument_id": entry.get("instrument_id"),
+            "quantity": entry.get("quantity"),
+            "average_price": entry.get("average_price"),
+            "current_price": entry.get("current_price"),
+            "current_value": entry.get("value"),
+            "result": entry.get("result"),
+            "result_percent": entry.get("result_percent"),
+            "currency": entry.get("currency"),
+            "exchange": entry.get("exchange"),
+            "type": entry.get("type"),
+            "last_update": entry.get("last_update"),
+        }
+
+    @property
+    def _position_entry(self) -> dict[str, Any] | None:
+        """Return the current bounded position entry for this entity."""
+        positions = self.coordinator.data.get("position_entities_by_id", {})
+        if not isinstance(positions, dict):
+            return None
+        entry = positions.get(self._position_id)
+        if isinstance(entry, dict):
+            return entry
+        return None
+
+
+def _position_label(position: dict[str, Any]) -> str:
+    """Return a display label for a bounded position entry."""
+    for key in ("state", "name", "ticker", "entity_id"):
+        value = position.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "holding"

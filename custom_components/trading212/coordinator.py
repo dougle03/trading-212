@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, timedelta
+import hashlib
 import logging
 from typing import Any
 
@@ -13,14 +16,25 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import (
+    DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS,
+    MAX_RATE_LIMIT_COOLDOWN_SECONDS,
+    MAX_PIE_DETAIL_FETCHES_PER_REFRESH,
+    MIN_RATE_LIMIT_COOLDOWN_SECONDS,
+    PIE_HYDRATION_CYCLE_SECONDS,
+    RATE_LIMIT_SAFETY_BUFFER_SECONDS,
     Trading212AuthError,
     Trading212Client,
     Trading212ConnectionError,
     Trading212Error,
     Trading212RateLimitError,
+    fallback_rate_limit_cooldown_seconds_for_group,
+    normalise_rate_limit_retry,
 )
 from .const import (
+    CONF_POSITION_DISPLAY_FORMAT,
     DEFAULT_FEATURE_OPTIONS,
+    DEFAULT_MAX_POSITION_ENTITIES,
+    DEFAULT_POSITION_DISPLAY_FORMAT,
     ENDPOINT_GROUP_ACCOUNT_SUMMARY,
     ENDPOINT_GROUP_DIVIDENDS,
     ENDPOINT_GROUP_MIN_REFRESH_SECONDS,
@@ -35,9 +49,15 @@ from .const import (
     FEATURE_PIES_SUMMARY,
     FEATURE_POSITIONS_SUMMARY,
     IMPLEMENTED_ENDPOINT_GROUPS,
+    MAX_POSITION_ENTITIES,
+    MIN_POSITION_ENTITIES,
+    POSITION_DISPLAY_FORMAT_NAME_TICKER,
+    POSITION_DISPLAY_FORMAT_TICKER,
+    POSITION_DISPLAY_FORMATS,
     STORAGE_KEY_PREFIX,
     STORAGE_VERSION,
 )
+from .options import get_entry_options
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +71,10 @@ class EndpointGroupState:
     last_failure: str | None = None
     last_failure_reason: str | None = None
     next_refresh: str | None = None
+    cooldown_until: str | None = None
+    retry_after_seconds: int | None = None
+    last_error_category: str | None = None
+    _logged_cooldown_until: str | None = None
     count: int | None = None
     status: str = "pending"
 
@@ -64,7 +88,7 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         client: Trading212Client,
         entry_id: str,
         update_interval_seconds: int,
-        feature_options: dict[str, bool] | None = None,
+        feature_options: dict[str, Any] | None = None,
     ) -> None:
         """Initialise the coordinator."""
         super().__init__(
@@ -74,7 +98,13 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=update_interval_seconds),
         )
         self.client = client
-        self.feature_options = _normalise_feature_options(feature_options)
+        self.feature_options = get_entry_options(feature_options)
+        self.max_position_entities = _normalise_max_position_entities(
+            self.feature_options
+        )
+        self.position_display_format = _normalise_position_display_format(
+            self.feature_options
+        )
         self._store = Store[dict[str, Any]](
             hass,
             STORAGE_VERSION,
@@ -85,12 +115,50 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             group: EndpointGroupState(status="disabled")
             for group in ENDPOINT_GROUP_MIN_REFRESH_SECONDS
         }
+        self._pie_hydrator_task: asyncio.Task | None = None
+        self._pie_hydrator_phase = "disabled"
+        self._pie_hydrator_enabled = False
+        self._pie_hydrator_last_cycle_started: str | None = None
+        self._pie_hydrator_last_cycle_completed: str | None = None
+        self._pie_hydrator_current_pie_id: str | None = None
 
     async def async_initialize(self) -> None:
         """Load the persisted daily baseline, if present."""
         stored = await self._store.async_load()
         if isinstance(stored, dict):
             self._daily_baseline = stored
+
+    async def async_start_pie_hydrator(self) -> None:
+        """Start the independent pie hydration task when pie features need it."""
+        self._pie_hydrator_enabled = self._pie_features_enabled()
+        if not self._pie_hydrator_enabled:
+            self._pie_hydrator_phase = "disabled"
+            return
+        if self._pie_hydrator_task is not None and not self._pie_hydrator_task.done():
+            return
+
+        self._pie_hydrator_phase = "idle"
+        self._pie_hydrator_task = asyncio.create_task(
+            self._async_run_pie_hydrator(),
+            name=f"trading212-pies-{id(self)}",
+        )
+        _LOGGER.info("Trading 212 pie hydrator started")
+
+    async def async_stop_pie_hydrator(self) -> None:
+        """Stop the independent pie hydration task cleanly."""
+        self._pie_hydrator_enabled = False
+        task = self._pie_hydrator_task
+        if task is None:
+            self._pie_hydrator_phase = "disabled"
+            return
+
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        self._pie_hydrator_task = None
+        self._pie_hydrator_phase = "stopped"
+        self._pie_hydrator_current_pie_id = None
+        _LOGGER.info("Trading 212 pie hydrator stopped")
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from Trading 212."""
@@ -106,11 +174,16 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
 
             try:
-                raw_data[group] = await self._async_get_endpoint_group(group)
+                group_data = await self._async_get_endpoint_group(group)
+                if group_data is None and _is_core_endpoint_group(group):
+                    raise UpdateFailed(
+                        f"Trading 212 endpoint group {group} is cooling down"
+                    )
+                raw_data[group] = group_data
             except Trading212AuthError as err:
                 raise UpdateFailed("Trading 212 API token was rejected") from err
             except Trading212RateLimitError as err:
-                if state.data is None:
+                if state.data is None and _is_core_endpoint_group(group):
                     raise UpdateFailed("Trading 212 API rate limit reached") from err
                 raw_data[group] = state.data
             except Trading212ConnectionError as err:
@@ -122,15 +195,83 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     raise UpdateFailed(f"Trading 212 API error: {err}") from err
                 raw_data[group] = state.data
 
-        summary = raw_data.get(ENDPOINT_GROUP_ACCOUNT_SUMMARY, {})
-        positions = raw_data.get(ENDPOINT_GROUP_POSITIONS, [])
-        pies = raw_data.get(ENDPOINT_GROUP_PIES, [])
+        return await self._compose_coordinator_data(
+            summary=raw_data.get(ENDPOINT_GROUP_ACCOUNT_SUMMARY, {}),
+            positions=raw_data.get(ENDPOINT_GROUP_POSITIONS, []),
+            pie_group=raw_data.get(ENDPOINT_GROUP_PIES, {}),
+        )
+
+    async def _async_get_endpoint_group(self, group: str) -> Any:
+        """Return endpoint group data using cooldown-aware last-good caching."""
+        state = self._endpoint_groups[group]
+        now = dt_util.utcnow()
+
+        cooldown_until = _parse_state_datetime(state.cooldown_until)
+        if cooldown_until is not None and now < cooldown_until:
+            state.status = "cooling_down" if state.data is None else "using_last_good"
+            return state.data
+
+        if state.data is not None and state.next_refresh is not None:
+            next_refresh = dt_util.parse_datetime(state.next_refresh)
+            if next_refresh is not None and now < next_refresh:
+                state.status = "cooldown"
+                return state.data
+
+        try:
+            if group == ENDPOINT_GROUP_PIES:
+                cached = self.client.current_pies_payload()
+                state.data = cached
+                state.count = _payload_count(cached)
+                state.status = self._pie_endpoint_group_status()
+                return cached
+            data = await self.client.fetch_endpoint_group(group)
+        except Trading212RateLimitError as err:
+            if group == ENDPOINT_GROUP_PIES and err.partial_data is not None:
+                state.data = _merge_pie_group_data(state.data, err.partial_data)
+            retry_after_seconds, retry_at = _rate_limit_retry_window(err, now, group)
+            state.last_failure = now.isoformat()
+            state.last_failure_reason = type(err).__name__
+            state.last_error_category = "rate_limited"
+            state.retry_after_seconds = retry_after_seconds
+            state.cooldown_until = retry_at.isoformat()
+            state.next_refresh = retry_at.isoformat()
+            state.status = "rate_limited" if state.data is None else "using_last_good"
+            self._log_rate_limit_once(group, state)
+            raise
+        except (Trading212ConnectionError, Trading212Error) as err:
+            state.last_failure = now.isoformat()
+            state.last_failure_reason = type(err).__name__
+            state.last_error_category = "api_error"
+            state.status = "using_last_good" if state.data is not None else "failed"
+            raise
+
+        state.data = data
+        state.last_success = now.isoformat()
+        state.last_failure = None
+        state.last_failure_reason = None
+        state.last_error_category = None
+        state.retry_after_seconds = None
+        state.cooldown_until = None
+        state.next_refresh = (
+            now + timedelta(seconds=ENDPOINT_GROUP_MIN_REFRESH_SECONDS[group])
+        ).isoformat()
+        state.count = _payload_count(data)
+        state.status = "ok"
+        return data
+
+    async def _compose_coordinator_data(
+        self,
+        *,
+        summary: Any,
+        positions: Any,
+        pie_group: Any,
+    ) -> dict[str, Any]:
+        """Build the coordinator payload from current cached group data."""
+        pies = _pies_from_group_payload(pie_group)
         if not isinstance(summary, dict):
             summary = {}
         if not isinstance(positions, list):
             positions = []
-        if not isinstance(pies, list):
-            pies = []
 
         cash = summary.get("cash", {})
         if not isinstance(cash, dict):
@@ -178,15 +319,19 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             current_account_value=_first_number(summary, "totalValue"),
             currency=_first_string(summary, "currency") or "GBP",
             last_update=now_utc,
+            display_format=self.position_display_format,
         )
         positions_summary = _build_positions_summary(
             positions=positions,
             account_value=_first_number(summary, "totalValue"),
             currency=_first_string(summary, "currency") or "GBP",
             last_update=now_utc,
+            max_position_entities=self.max_position_entities,
+            display_format=self.position_display_format,
         )
         pies_summary = _build_pies_summary(
             pies=pies,
+            pie_group=pie_group if isinstance(pie_group, dict) else {},
             currency=_first_string(summary, "currency") or "GBP",
             last_update=now_utc,
         )
@@ -208,35 +353,165 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             **daily_summary,
         }
 
-    async def _async_get_endpoint_group(self, group: str) -> Any:
-        """Return endpoint group data using cooldown-aware last-good caching."""
-        state = self._endpoint_groups[group]
-        now = dt_util.utcnow()
+    def _pie_endpoint_group_status(self) -> str:
+        """Return the current pies endpoint-group status from hydrator state."""
+        if not self._pie_hydrator_enabled:
+            return "disabled"
+        if self._pie_hydrator_phase == "cooling_down":
+            return "cooling_down"
+        if self._pie_hydrator_phase in {"list_fetch", "detail_fetch"}:
+            return "hydrating"
+        if self._pie_hydrator_phase == "error":
+            return "failed"
+        payload = self.client.current_pies_payload()
+        if payload.get("list_loaded"):
+            return "ok"
+        return "pending"
 
-        if state.data is not None and state.next_refresh is not None:
-            next_refresh = dt_util.parse_datetime(state.next_refresh)
-            if next_refresh is not None and now < next_refresh:
-                state.status = "cooldown"
-                return state.data
-
+    async def _async_run_pie_hydrator(self) -> None:
+        """Run the independent pie hydration cycle."""
+        state = self._endpoint_groups[ENDPOINT_GROUP_PIES]
         try:
-            data = await self.client.fetch_endpoint_group(group)
-        except (Trading212RateLimitError, Trading212ConnectionError, Trading212Error) as err:
-            state.last_failure = now.isoformat()
-            state.last_failure_reason = type(err).__name__
-            state.status = "using_last_good" if state.data is not None else "failed"
-            raise
+            while self._pie_hydrator_enabled:
+                cycle_started = dt_util.utcnow()
+                self._pie_hydrator_last_cycle_started = cycle_started.isoformat()
+                self._pie_hydrator_phase = "list_fetch"
+                try:
+                    payload = await self.client.refresh_pie_list_for_cycle()
+                except Trading212RateLimitError as err:
+                    await self._async_handle_pies_rate_limit(err)
+                    await self._async_sleep_until_pies_retry()
+                    continue
+                except Exception:
+                    self._pie_hydrator_phase = "error"
+                    state.last_error_category = "error"
+                    _LOGGER.exception("Trading 212 pie hydrator list fetch failed")
+                    await asyncio.sleep(PIE_HYDRATION_CYCLE_SECONDS)
+                    continue
 
-        state.data = data
-        state.last_success = now.isoformat()
-        state.last_failure = None
-        state.last_failure_reason = None
-        state.next_refresh = (
-            now + timedelta(seconds=ENDPOINT_GROUP_MIN_REFRESH_SECONDS[group])
-        ).isoformat()
-        state.count = _payload_count(data)
-        state.status = "ok"
-        return data
+                await self._async_publish_pie_payload(payload, phase="detail_fetch")
+
+                while self._pie_hydrator_enabled:
+                    next_pie_id = self.client._next_pending_pie_detail_id()
+                    self._pie_hydrator_current_pie_id = next_pie_id
+                    if next_pie_id is None:
+                        break
+                    if not self.client._pie_detail_request_ready():
+                        wait_seconds = self.client.seconds_until_next_pie_detail_request()
+                        self._pie_hydrator_phase = "detail_fetch"
+                        _LOGGER.debug(
+                            "Trading 212 pie detail hydration paused; waiting for learned pacing window"
+                        )
+                        await self._async_publish_pie_payload(
+                            self.client.current_pies_payload(
+                                detail_skipped_due_to_pacing=1
+                            ),
+                            phase="detail_fetch",
+                        )
+                        await asyncio.sleep(max(wait_seconds, 1))
+                        continue
+
+                    self._pie_hydrator_phase = "detail_fetch"
+                    try:
+                        payload = await self.client.hydrate_next_pie_detail()
+                    except Trading212RateLimitError as err:
+                        self.client._learn_request_pacing_from_rate_limit(err)
+                        await self._async_handle_pies_rate_limit(err)
+                        await self._async_sleep_until_pies_retry()
+                        break
+                    except Exception:
+                        self._pie_hydrator_phase = "error"
+                        state.last_error_category = "error"
+                        _LOGGER.exception("Trading 212 pie hydrator detail fetch failed")
+                        await asyncio.sleep(PIE_HYDRATION_CYCLE_SECONDS)
+                        break
+
+                    await self._async_publish_pie_payload(payload, phase="detail_fetch")
+                    _LOGGER.debug(
+                        "Trading 212 pie detail fetched for %s",
+                        self._pie_hydrator_current_pie_id,
+                    )
+
+                if not self._pie_hydrator_enabled:
+                    break
+                if self._pie_hydrator_phase == "cooling_down":
+                    continue
+
+                self._pie_hydrator_current_pie_id = None
+                self._pie_hydrator_phase = "complete"
+                self._pie_hydrator_last_cycle_completed = dt_util.utcnow().isoformat()
+                await self._async_publish_pie_payload(
+                    self.client.current_pies_payload(),
+                    phase="complete",
+                )
+                _LOGGER.debug("Trading 212 pie hydration cycle completed")
+                await asyncio.sleep(PIE_HYDRATION_CYCLE_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._pie_hydrator_task = None
+            self._pie_hydrator_current_pie_id = None
+            if not self._pie_hydrator_enabled:
+                self._pie_hydrator_phase = "disabled"
+
+    async def _async_handle_pies_rate_limit(self, err: Trading212RateLimitError) -> None:
+        """Apply pies cooldown state after a rate limit from the hydrator."""
+        state = self._endpoint_groups[ENDPOINT_GROUP_PIES]
+        now = dt_util.utcnow()
+        payload = err.partial_data if isinstance(err.partial_data, dict) else self.client.current_pies_payload(detail_rate_limited=True)
+        retry_after_seconds, retry_at = _rate_limit_retry_window(
+            err,
+            now,
+            ENDPOINT_GROUP_PIES,
+        )
+        state.data = _merge_pie_group_data(state.data, payload)
+        state.last_failure = now.isoformat()
+        state.last_failure_reason = type(err).__name__
+        state.last_error_category = "rate_limited"
+        state.retry_after_seconds = retry_after_seconds
+        state.cooldown_until = retry_at.isoformat()
+        state.next_refresh = retry_at.isoformat()
+        state.count = _payload_count(state.data)
+        state.status = "using_last_good" if state.data is not None else "rate_limited"
+        self._pie_hydrator_phase = "cooling_down"
+        self._log_rate_limit_once(ENDPOINT_GROUP_PIES, state)
+        await self._async_publish_pie_payload(state.data, phase="cooling_down")
+
+    async def _async_sleep_until_pies_retry(self) -> None:
+        """Sleep until the pies cooldown expires."""
+        state = self._endpoint_groups[ENDPOINT_GROUP_PIES]
+        cooldown_until = _parse_state_datetime(state.cooldown_until)
+        if cooldown_until is None:
+            await asyncio.sleep(PIE_HYDRATION_CYCLE_SECONDS)
+            return
+        remaining = (cooldown_until - dt_util.utcnow()).total_seconds()
+        await asyncio.sleep(max(int(remaining), 1))
+
+    async def _async_publish_pie_payload(self, payload: Any, *, phase: str) -> None:
+        """Publish updated pie payload to coordinator state and listeners."""
+        state = self._endpoint_groups[ENDPOINT_GROUP_PIES]
+        now = dt_util.utcnow().isoformat()
+        state.data = payload
+        state.count = _payload_count(payload)
+        state.last_success = now
+        state.last_failure = None if phase != "cooling_down" else state.last_failure
+        if phase != "cooling_down":
+            state.last_failure_reason = None
+            state.last_error_category = None
+            state.retry_after_seconds = None
+            state.cooldown_until = None
+            state.next_refresh = now
+        state.status = self._pie_endpoint_group_status()
+        self._pie_hydrator_phase = phase
+
+        if self.data is None:
+            return
+        composed = await self._compose_coordinator_data(
+            summary=self.data.get("summary", {}),
+            positions=self.data.get("positions", []),
+            pie_group=payload,
+        )
+        self.async_set_updated_data(composed)
 
     def _enabled_endpoint_groups(self) -> set[str]:
         """Return endpoint groups required by enabled feature options."""
@@ -261,18 +536,54 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @property
     def endpoint_group_status(self) -> dict[str, dict[str, Any]]:
         """Return redacted endpoint group status for diagnostics."""
-        return {
+        status = {
             group: {
                 "status": state.status,
                 "last_success": state.last_success,
                 "last_failure": state.last_failure,
                 "last_failure_reason": state.last_failure_reason,
                 "next_refresh": state.next_refresh,
+                "cooldown_until": state.cooldown_until,
+                "retry_after_seconds": state.retry_after_seconds,
+                "last_error_category": state.last_error_category,
                 "count": state.count,
+                "has_last_good_data": state.data is not None,
                 "min_refresh_seconds": ENDPOINT_GROUP_MIN_REFRESH_SECONDS[group],
+                "endpoint_group": group,
             }
             for group, state in self._endpoint_groups.items()
         }
+        if ENDPOINT_GROUP_PIES in status:
+            status[ENDPOINT_GROUP_PIES].update(
+                {
+                    "hydrator_enabled": self._pie_hydrator_enabled,
+                    "hydrator_running": self._pie_hydrator_task is not None
+                    and not self._pie_hydrator_task.done(),
+                    "hydrator_phase": self._pie_hydrator_phase,
+                    "hydrator_last_cycle_started": self._pie_hydrator_last_cycle_started,
+                    "hydrator_last_cycle_completed": self._pie_hydrator_last_cycle_completed,
+                    "hydrator_current_pie_id": self._pie_hydrator_current_pie_id,
+                }
+            )
+        return status
+
+    def _log_rate_limit_once(self, group: str, state: EndpointGroupState) -> None:
+        """Log a rate-limit cooldown once per cooldown window."""
+        if state.cooldown_until == state._logged_cooldown_until:
+            return
+        state._logged_cooldown_until = state.cooldown_until
+        _LOGGER.warning(
+            "Trading 212 endpoint group %s is rate limited; cooling down for %s seconds",
+            group,
+            state.retry_after_seconds,
+        )
+
+    def _pie_features_enabled(self) -> bool:
+        """Return whether any pie-backed feature currently needs hydration."""
+        return bool(
+            self.feature_options.get(FEATURE_PIES_SUMMARY)
+            or self.feature_options.get(FEATURE_PER_PIE_ENTITIES)
+        )
 
     async def _async_ensure_daily_baseline(
         self,
@@ -314,7 +625,7 @@ def _build_position_baseline(positions: list[dict[str, Any]]) -> dict[str, dict[
     return baseline_positions
 
 
-def _normalise_feature_options(options: dict[str, bool] | None) -> dict[str, bool]:
+def _normalise_feature_options(options: dict[str, Any] | None) -> dict[str, Any]:
     """Return feature options with safe defaults for missing keys."""
     normalised = dict(DEFAULT_FEATURE_OPTIONS)
     if isinstance(options, dict):
@@ -325,18 +636,128 @@ def _normalise_feature_options(options: dict[str, bool] | None) -> dict[str, boo
     return normalised
 
 
+def _normalise_max_position_entities(options: dict[str, Any] | None) -> int:
+    """Return a bounded per-position entity limit."""
+    value = DEFAULT_MAX_POSITION_ENTITIES
+    if isinstance(options, dict) and "max_position_entities" in options:
+        try:
+            value = int(options["max_position_entities"])
+        except (TypeError, ValueError):
+            value = DEFAULT_MAX_POSITION_ENTITIES
+    return min(max(value, MIN_POSITION_ENTITIES), MAX_POSITION_ENTITIES)
+
+
+def _normalise_position_display_format(options: dict[str, Any] | None) -> str:
+    """Return the preferred position display format."""
+    if isinstance(options, dict):
+        value = options.get(CONF_POSITION_DISPLAY_FORMAT)
+        if isinstance(value, str) and value in POSITION_DISPLAY_FORMATS:
+            return value
+    return DEFAULT_POSITION_DISPLAY_FORMAT
+
+
 def _payload_count(data: Any) -> int | None:
     """Return a safe payload count for diagnostics without exposing payload data."""
     if isinstance(data, list):
         return len(data)
     if isinstance(data, dict):
+        pies = data.get("pies")
+        if isinstance(pies, list):
+            return len(pies)
         return len(data)
     return None
+
+
+def _pies_from_group_payload(data: Any) -> list[dict[str, Any]]:
+    """Return pie items from the cached pies endpoint-group payload."""
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        pies = data.get("pies")
+        if isinstance(pies, list):
+            return [item for item in pies if isinstance(item, dict)]
+    return []
+
+
+def _merge_pie_group_data(existing: Any, partial: Any) -> Any:
+    """Merge a partial detail refresh with previous last-good pie data."""
+    if not isinstance(partial, dict):
+        return existing
+
+    previous_pies = {
+        pie_id: pie
+        for pie in _pies_from_group_payload(existing)
+        if (pie_id := _pie_id(pie)) is not None
+    }
+    merged = []
+    seen_ids: set[str] = set()
+    for pie in _pies_from_group_payload(partial):
+        pie_id = _pie_id(pie)
+        if pie_id is not None and pie_id in previous_pies:
+            merged.append({**previous_pies[pie_id], **pie})
+            seen_ids.add(pie_id)
+        else:
+            merged.append(pie)
+            if pie_id is not None:
+                seen_ids.add(pie_id)
+
+    for pie_id, previous_pie in previous_pies.items():
+        if pie_id not in seen_ids:
+            merged.append(previous_pie)
+
+    if not merged and existing is not None:
+        return existing
+
+    existing_group = existing if isinstance(existing, dict) else {}
+    return {
+        **existing_group,
+        **partial,
+        "pies": merged,
+        "complete": False,
+    }
+
+
+def _is_core_endpoint_group(group: str) -> bool:
+    """Return whether missing data should block setup/update."""
+    return group in {
+        ENDPOINT_GROUP_ACCOUNT_SUMMARY,
+        ENDPOINT_GROUP_POSITIONS,
+    }
+
+
+def _parse_state_datetime(value: str | None):
+    """Parse stored endpoint-group timestamps."""
+    if value is None:
+        return None
+    return dt_util.parse_datetime(value)
+
+
+def _rate_limit_retry_window(
+    err: Trading212RateLimitError,
+    now,
+    group: str,
+) -> tuple[int, Any]:
+    """Return retry-after seconds and absolute retry time for a rate limit."""
+    fallback_seconds = fallback_rate_limit_cooldown_seconds_for_group(group)
+    retry_after_seconds, retry_at, _used_fallback = normalise_rate_limit_retry(
+        retry_after_seconds=err.retry_after_seconds,
+        retry_at=err.retry_at,
+        now=now,
+        fallback_seconds=max(fallback_seconds, DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS),
+        minimum_seconds=max(
+            ENDPOINT_GROUP_MIN_REFRESH_SECONDS.get(group, MIN_RATE_LIMIT_COOLDOWN_SECONDS),
+            MIN_RATE_LIMIT_COOLDOWN_SECONDS,
+        ),
+        safety_buffer_seconds=RATE_LIMIT_SAFETY_BUFFER_SECONDS,
+        maximum_seconds=MAX_RATE_LIMIT_COOLDOWN_SECONDS,
+    )
+    return retry_after_seconds, retry_at
 
 
 def _build_pies_summary(
     *,
     pies: list[dict[str, Any]],
+    pie_group: dict[str, Any],
     currency: str,
     last_update,
 ) -> dict[str, Any]:
@@ -376,6 +797,20 @@ def _build_pies_summary(
         "pies_with_value": len(value_entries),
         "pies_with_cash": len(cash_entries),
         "pies_with_result": len(result_entries),
+        "pie_list_count": _safe_int(pie_group.get("list_count")),
+        "pie_detail_count": _safe_int(pie_group.get("detail_count")),
+        "pie_detail_pending_count": _safe_int(pie_group.get("detail_pending_count")),
+        "pie_detail_attempted_this_refresh": _safe_int(
+            pie_group.get("detail_attempted_this_refresh")
+        ),
+        "pie_detail_skipped_count": _safe_int(
+            pie_group.get("detail_skipped_count")
+        ),
+        "pie_detail_skipped_due_to_pacing": _safe_int(
+            pie_group.get("detail_skipped_due_to_pacing")
+        ),
+        "pie_detail_rate_limited": bool(pie_group.get("detail_rate_limited")),
+        "pie_detail_complete": bool(pie_group.get("complete")),
         "currency": currency,
         "last_update": last_update.isoformat(),
     }
@@ -409,7 +844,7 @@ def _pie_summary_entry(
         return None
 
     value = _round_money(
-        _first_number(
+        _first_nested_number(
             pie,
             "value",
             "currentValue",
@@ -417,7 +852,9 @@ def _pie_summary_entry(
             "marketValue",
         )
     )
-    cash = _round_money(_first_number(pie, "cash", "availableCash", "cashValue"))
+    cash = _round_money(
+        _first_nested_number(pie, "cash", "availableCash", "cashValue")
+    )
     result = _round_money(_pie_result(pie))
     updated_at = _first_string(
         pie,
@@ -437,6 +874,7 @@ def _pie_summary_entry(
         "created_at": _first_string(pie, "createdAt", "creationDate"),
         "updated_at": updated_at,
         "last_update": last_update.isoformat(),
+        "source": _first_string(pie, "detail_status") or "list",
     }
 
 
@@ -453,6 +891,7 @@ def _pie_summary_attributes(entry: dict[str, Any] | None) -> dict[str, Any]:
         "created_at": entry.get("created_at"),
         "updated_at": entry.get("updated_at"),
         "last_update": entry.get("last_update"),
+        "source": entry.get("source"),
     }
 
 
@@ -487,7 +926,7 @@ def _pie_id(pie: dict[str, Any]) -> str | None:
 
 def _pie_result(pie: dict[str, Any]) -> float | None:
     """Return a bounded numeric pie result when directly available."""
-    result = _first_number(
+    result = _first_nested_number(
         pie,
         "result",
         "profitLoss",
@@ -529,12 +968,22 @@ def _build_positions_summary(
     account_value: float | None,
     currency: str,
     last_update,
+    max_position_entities: int,
+    display_format: str,
 ) -> dict[str, Any]:
     """Build bounded summary-only portfolio insight data."""
     entries = [
         entry
         for position in positions
-        if (entry := _position_summary_entry(position, currency, last_update)) is not None
+        if (
+            entry := _position_summary_entry(
+                position,
+                currency,
+                last_update,
+                display_format,
+            )
+        )
+        is not None
     ]
 
     value_entries = [entry for entry in entries if entry.get("value") is not None]
@@ -580,6 +1029,11 @@ def _build_positions_summary(
 
     best_position = _best_result_entry(result_entries)
     worst_position = _worst_result_entry(result_entries)
+    entity_entries = sorted(
+        (entry for entry in entries if entry.get("entity_id") is not None),
+        key=_position_entity_sort_key,
+    )
+    exposed_entity_entries = entity_entries[:max_position_entities]
 
     return {
         "largest_position": _entity_state(largest_position),
@@ -597,6 +1051,14 @@ def _build_positions_summary(
         "best_position_result": _entry_number(best_position, "result"),
         "worst_position": _entity_state(worst_position),
         "worst_position_result": _entry_number(worst_position, "result"),
+        "position_entities": exposed_entity_entries,
+        "position_entities_by_id": {
+            str(entry["entity_id"]): entry for entry in exposed_entity_entries
+        },
+        "position_entities_limit": max_position_entities,
+        "position_entities_available": len(entity_entries),
+        "position_entities_exposed": len(exposed_entity_entries),
+        "position_entities_truncated": len(entity_entries) > len(exposed_entity_entries),
         "largest_position_attrs": _position_summary_attributes(largest_position),
         "largest_position_value_attrs": _position_summary_attributes(largest_position),
         "largest_position_percentage_attrs": _position_summary_attributes(
@@ -636,12 +1098,14 @@ def _position_summary_entry(
     position: dict[str, Any],
     currency: str,
     last_update,
+    display_format: str,
 ) -> dict[str, Any] | None:
     """Build bounded summary data for one position."""
-    label = _position_label(position)
+    label = _position_label(position, display_format)
     if label is None:
         return None
 
+    entity_id = _position_entity_id(position)
     value = _round_money(_position_current_value(position))
     result = _round_money(_position_result(position))
     result_percent = None
@@ -650,16 +1114,30 @@ def _position_summary_entry(
         result_percent = round((result / cost) * 100, 2)
 
     return {
+        "entity_id": entity_id,
         "state": label,
         "ticker": _position_ticker(position),
         "name": _position_name(position),
+        "isin": _position_isin(position),
+        "instrument_id": _position_instrument_id(position),
+        "exchange": _position_exchange(position),
+        "type": _position_type(position),
         "value": value,
         "result": result,
         "result_percent": result_percent,
         "quantity": _position_quantity(position),
+        "average_price": _position_average_price(position),
+        "current_price": _position_current_price(position),
         "currency": currency,
         "last_update": last_update.isoformat(),
     }
+
+
+def _position_entity_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
+    """Return deterministic ordering for per-position entity creation."""
+    value = entry.get("value")
+    sortable_value = float(value) if isinstance(value, int | float) else 0.0
+    return (-sortable_value, str(entry.get("ticker") or ""), str(entry.get("entity_id")))
 
 
 def _best_result_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -704,11 +1182,17 @@ def _position_summary_attributes(entry: dict[str, Any] | None) -> dict[str, Any]
     return {
         "ticker": entry.get("ticker"),
         "name": entry.get("name"),
+        "isin": entry.get("isin"),
+        "instrument_id": entry.get("instrument_id"),
         "value": entry.get("value"),
         "result": entry.get("result"),
         "result_percent": entry.get("result_percent"),
         "quantity": entry.get("quantity"),
+        "average_price": entry.get("average_price"),
+        "current_price": entry.get("current_price"),
         "currency": entry.get("currency"),
+        "exchange": entry.get("exchange"),
+        "type": entry.get("type"),
         "last_update": entry.get("last_update"),
     }
 
@@ -739,6 +1223,7 @@ def _build_daily_summary(
     current_account_value: float | None,
     currency: str,
     last_update,
+    display_format: str,
 ) -> dict[str, Any]:
     """Build summary-only daily movement data for the sensors."""
     opening_value = _safe_number(baseline.get("account_value"))
@@ -761,6 +1246,7 @@ def _build_daily_summary(
                 currency=currency,
                 baseline_time=baseline.get("baseline_time"),
                 last_update=last_update,
+                display_format=display_format,
             )
             if entry is not None:
                 mover_entries.append(entry)
@@ -822,6 +1308,7 @@ def _position_movement_entry(
     currency: str,
     baseline_time: str | None,
     last_update,
+    display_format: str,
 ) -> dict[str, Any] | None:
     """Build movement data for one position when a same-day baseline exists."""
     key = _position_key(position)
@@ -847,7 +1334,7 @@ def _position_movement_entry(
         portfolio_impact_percent = round((change_value / opening_portfolio_value) * 100, 2)
 
     return {
-        "state": _position_label(position),
+        "state": _position_label(position, display_format),
         "ticker": _position_ticker(position),
         "name": _position_name(position),
         "change_value": change_value,
@@ -923,6 +1410,41 @@ def _position_key(position: dict[str, Any]) -> str | None:
     return _first_string(position, "ticker")
 
 
+def _position_entity_id(position: dict[str, Any]) -> str | None:
+    """Return a stable per-position entity identifier."""
+    isin = _position_isin(position)
+    if isin:
+        return f"isin_{_stable_token(isin)}"
+
+    ticker = _position_ticker(position)
+    if ticker:
+        return f"ticker_{_stable_token(ticker)}"
+
+    position_id = _position_instrument_id(position) or _first_string(
+        position,
+        "id",
+        "positionId",
+    )
+    if position_id:
+        return f"id_{_stable_token(position_id)}"
+
+    parts = [
+        _position_name(position) or "",
+        _first_string(position, "currency") or "",
+    ]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
+    return f"hash_{digest}"
+
+
+def _stable_token(value: str) -> str:
+    """Return a Home Assistant-safe stable token."""
+    token = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in value.strip()
+    ).strip("_")
+    return token or hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
 def _position_ticker(position: dict[str, Any]) -> str | None:
     """Return the position ticker if available."""
     instrument = position.get("instrument")
@@ -933,6 +1455,35 @@ def _position_ticker(position: dict[str, Any]) -> str | None:
     return _first_string(position, "ticker")
 
 
+def _position_isin(position: dict[str, Any]) -> str | None:
+    """Return the instrument ISIN if available."""
+    instrument = position.get("instrument")
+    if isinstance(instrument, dict):
+        isin = _first_string(instrument, "isin")
+        if isin:
+            return isin
+    return _first_string(position, "isin")
+
+
+def _position_instrument_id(position: dict[str, Any]) -> str | None:
+    """Return a stable instrument or position identifier when available."""
+    instrument = position.get("instrument")
+    if isinstance(instrument, dict):
+        for key in ("id", "instrumentId", "ticker"):
+            value = instrument.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, int):
+                return str(value)
+    for key in ("instrumentId", "positionId", "id"):
+        value = position.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, int):
+            return str(value)
+    return None
+
+
 def _position_name(position: dict[str, Any]) -> str | None:
     """Return the position display name if available."""
     instrument = position.get("instrument")
@@ -941,14 +1492,70 @@ def _position_name(position: dict[str, Any]) -> str | None:
     return _first_string(position, "name")
 
 
-def _position_label(position: dict[str, Any]) -> str | None:
+def _position_exchange(position: dict[str, Any]) -> str | None:
+    """Return exchange information if already present in the position payload."""
+    instrument = position.get("instrument")
+    if isinstance(instrument, dict):
+        exchange = _first_string(instrument, "exchange", "exchangeCode")
+        if exchange:
+            return exchange
+    return _first_string(position, "exchange", "exchangeCode")
+
+
+def _position_type(position: dict[str, Any]) -> str | None:
+    """Return instrument type if already present in the position payload."""
+    instrument = position.get("instrument")
+    if isinstance(instrument, dict):
+        instrument_type = _first_string(instrument, "type", "instrumentType")
+        if instrument_type:
+            return instrument_type
+    return _first_string(position, "type", "instrumentType")
+
+
+def _position_label(
+    position: dict[str, Any],
+    display_format: str = DEFAULT_POSITION_DISPLAY_FORMAT,
+) -> str | None:
     """Return the preferred state label for a position summary sensor."""
-    return _position_name(position) or _position_ticker(position)
+    name = _position_name(position)
+    ticker = _position_ticker(position)
+    if display_format == POSITION_DISPLAY_FORMAT_TICKER:
+        return ticker or name
+    if display_format == POSITION_DISPLAY_FORMAT_NAME_TICKER:
+        if name and ticker and name != ticker:
+            return f"{name} ({ticker})"
+        return name or ticker
+    return name or ticker
 
 
 def _position_quantity(position: dict[str, Any]) -> float | None:
     """Return the position quantity."""
     return _round_quantity(_first_number(position, "quantity"))
+
+
+def _position_average_price(position: dict[str, Any]) -> float | None:
+    """Return average price if already present in the position payload."""
+    return _round_money(
+        _first_number(
+            position,
+            "averagePrice",
+            "avgPrice",
+            "averageOpeningPrice",
+            "priceAvg",
+        )
+    )
+
+
+def _position_current_price(position: dict[str, Any]) -> float | None:
+    """Return current price if already present in the position payload."""
+    return _round_money(
+        _first_number(
+            position,
+            "currentPrice",
+            "price",
+            "marketPrice",
+        )
+    )
 
 
 def _position_current_value(position: dict[str, Any]) -> float | None:
@@ -1025,6 +1632,17 @@ def _safe_number(value: Any) -> float | None:
     return None
 
 
+def _safe_int(value: Any) -> int | None:
+    """Return an int from a stored numeric value."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
+
+
 def _first_number(source: dict[str, Any], *keys: str) -> float | None:
     """Return the first numeric value found for the supplied keys."""
     for key in keys:
@@ -1038,6 +1656,20 @@ def _first_number(source: dict[str, Any], *keys: str) -> float | None:
                 return float(value)
             except ValueError:
                 continue
+    return None
+
+
+def _first_nested_number(source: dict[str, Any], *keys: str) -> float | None:
+    """Return the first numeric value found at top level or common detail containers."""
+    value = _first_number(source, *keys)
+    if value is not None:
+        return value
+    for container_key in ("summary", "overview", "result", "investmentResult"):
+        container = source.get(container_key)
+        if isinstance(container, dict):
+            value = _first_number(container, *keys)
+            if value is not None:
+                return value
     return None
 
 

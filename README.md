@@ -13,7 +13,8 @@ This project is not affiliated with, endorsed by, or supported by Trading 212.
 - Account summary sensors
 - Positions summary and portfolio insight sensors
 - Daily movement summary sensors based on a local Home Assistant day baseline
-- Optional pies summary sensors, disabled by default
+- Optional per-position entities, disabled by default
+- Optional pies summary sensors with paced read-only pie detail fetching, disabled by default
 - Redacted diagnostics
 - Multi-account setup with labels for additional accounts
 
@@ -126,7 +127,11 @@ The options flow controls read-only feature groups.
 
 Account summary, positions summary, and daily movement are enabled by default. Pies summary is available but disabled by default. Per-position and per-pie entity groups are disabled by default to avoid creating a large number of entities.
 
-Pies endpoints may be cooldown-limited, so the integration uses endpoint-group throttling and cached last-good data for pies summary data.
+Per-position entities are optional. When enabled, the integration creates one sensor per open position up to the configured maximum, which defaults to `50` and can be set from `1` to `250`. Users with many holdings may get many entities. Position entity names and position summary text use the selected display format where the API provides enough data, defaulting to instrument names with ticker/code retained in attributes. If there are more open positions than the configured limit, the integration exposes a deterministic first set and reports truncation in diagnostics. Reloading the integration may be required after changing optional entity groups so entities can appear or become unavailable cleanly.
+
+Pies summary refreshes the Trading 212 pie list first, then hydrates pie details on its own safe background cycle with adaptive pacing. It does not fetch pie details once per sensor or block normal setup/reload. Pie data may temporarily show unavailable or unknown while detail hydration is still pending or while the integration waits out Trading 212 cooldowns.
+
+Optional endpoints may be cooldown-limited by Trading 212. When the API returns a rate-limit response, the integration reads the retry timing where available, adapts future pacing where practical, marks only that endpoint group as cooling down, keeps unrelated groups working, and waits for the cooldown before retrying. Cached last-good data is reused where available, and diagnostics report the endpoint group status without raw financial payloads.
 
 ## Dashboard Examples
 
@@ -141,8 +146,10 @@ The simple example uses standard Home Assistant cards only. The advanced example
 ## Known Limitations
 
 - Daily movement is calculated from the integration's local Home Assistant day baseline, not Trading 212's official market-day performance figures.
-- Pies summary is optional and depends on the Trading 212 pies endpoint being available for the API token.
+- Pies summary is optional and depends on the Trading 212 pies list and pie detail endpoints being available for the API token.
+- Optional endpoint groups may temporarily show unavailable or cooling down if Trading 212 rate limits are hit.
 - Per-position, per-pie, and pie-slice entities are not created by default.
+- Per-position entities are opt-in and limited by the configured maximum.
 - The integration only reads Trading 212 API data; it does not manage accounts or execute actions.
 
 ## Security
