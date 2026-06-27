@@ -20,3 +20,19 @@ secrets.yaml
 .DS_Store
 .vscode/
 .idea/
+
+# Internal/private project documentation
+PROJECT_LOG.md
+docs/ROADMAP.md
+docs/CODEX_WORKFLOW_GUARDRAILS.md
+docs/APP_PORTABILITY_PROJECT_NOTES.md
+docs/APP_PORTABILITY_STANDARD.md
+docs/APP_SECURITY_STANDARD.md
+docs/GUI_LAYOUT_WORKFLOW_STANDARD.md
+docs/TRADING212_PROJECT_NOTES.md
+
+# Local/internal notes
+docs/*_PROJECT_NOTES_INTERNAL.md
+docs/*_INTERNAL.md
+docs/internal/
+internal/
