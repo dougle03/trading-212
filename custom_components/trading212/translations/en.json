@@ -44,15 +44,6 @@
         },
         "data_description": {
           "position_display_format": "Controls position entity names and position summary labels where the API provides enough data."
-        },
-        "selector": {
-          "position_display_format": {
-            "options": {
-              "name": "Instrument name",
-              "ticker": "Ticker or code",
-              "name_ticker": "Name plus ticker or code"
-            }
-          }
         }
       }
     }
