@@ -98,13 +98,16 @@ class Trading212Client:
         self._auth = BasicAuth(api_key, api_secret)
         self._base_url = ENVIRONMENT_URLS[environment].rstrip("/")
         self._learned_request_pacing_seconds: dict[str, int] = {
+            REQUEST_KIND_PIE_LIST: ENDPOINT_GROUP_MIN_REFRESH_SECONDS[ENDPOINT_GROUP_PIES],
             REQUEST_KIND_PIE_DETAIL: PIE_DETAIL_PACING_SECONDS,
         }
+        self._last_rate_limit_headers: dict[str, dict[str, int | str | None]] = {}
+        self._last_request_at: dict[str, datetime] = {}
+        self._next_allowed_request_at: dict[str, datetime] = {}
         self._latest_pies: list[dict[str, Any]] = []
         self._pie_list_loaded = False
         self._pie_detail_cache: dict[str, dict[str, Any]] = {}
         self._pending_pie_detail_ids: list[str] = []
-        self._last_pie_detail_request_at: datetime | None = None
 
     async def get_account_summary(self) -> dict[str, Any]:
         """Return Trading 212 account cash and equity summary."""
@@ -122,6 +125,11 @@ class Trading212Client:
 
     async def get_pies(self) -> list[dict[str, Any]]:
         """Return Trading 212 pies from the read-only pies endpoint."""
+        self._raise_if_request_locked(
+            REQUEST_KIND_PIE_LIST,
+            "/equity/pies",
+            partial_data=self.current_pies_payload(),
+        )
         data = await self._get_json("/equity/pies")
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
@@ -134,7 +142,14 @@ class Trading212Client:
 
     async def get_pie_detail(self, pie_id: str) -> dict[str, Any]:
         """Return one Trading 212 pie detail from the read-only detail endpoint."""
-        data = await self._get_json(f"/equity/pies/{quote(pie_id, safe='')}")
+        detail_path_id = _format_pie_detail_path_id(pie_id)
+        path = f"/equity/pies/{quote(detail_path_id, safe='')}"
+        self._raise_if_request_locked(
+            REQUEST_KIND_PIE_DETAIL,
+            path,
+            partial_data=self.current_pies_payload(detail_rate_limited=True),
+        )
+        data = await self._get_json(path)
         if not isinstance(data, dict):
             raise Trading212Error("Unexpected pie detail response")
         return data
@@ -158,7 +173,6 @@ class Trading212Client:
             return self.current_pies_payload()
 
         detail = await self.get_pie_detail(next_pie_id)
-        self._last_pie_detail_request_at = datetime.now(UTC)
         self._pie_detail_cache[next_pie_id] = detail
         self._remove_pending_pie_detail_id(next_pie_id)
         return self.current_pies_payload(detail_attempted_this_refresh=1)
@@ -207,10 +221,12 @@ class Trading212Client:
 
     def request_pacing_seconds(self, request_kind: str) -> int:
         """Return the current learned pacing for a request kind."""
-        if request_kind == REQUEST_KIND_PIE_DETAIL:
+        if request_kind in {REQUEST_KIND_PIE_LIST, REQUEST_KIND_PIE_DETAIL}:
             return self._learned_request_pacing_seconds.get(
                 request_kind,
-                PIE_DETAIL_PACING_SECONDS,
+                ENDPOINT_GROUP_MIN_REFRESH_SECONDS[ENDPOINT_GROUP_PIES]
+                if request_kind == REQUEST_KIND_PIE_LIST
+                else PIE_DETAIL_PACING_SECONDS,
             )
         return MIN_RATE_LIMIT_COOLDOWN_SECONDS
 
@@ -219,23 +235,31 @@ class Trading212Client:
         """Return non-sensitive adaptive rate-limit state."""
         return {
             "request_pacing_seconds": dict(self._learned_request_pacing_seconds),
+            "request_next_allowed_at": {
+                kind: retry_at.isoformat()
+                for kind, retry_at in self._next_allowed_request_at.items()
+            },
+            "request_last_rate_limit_headers": dict(self._last_rate_limit_headers),
             "pie_detail_pending_count": len(self._pending_pie_detail_ids),
+            "pie_detail_hydrated_count": len(self._pie_detail_cache),
             "pie_list_count": len(self._latest_pies),
             "pie_list_loaded": self._pie_list_loaded,
         }
 
     def _minimum_rate_limit_cooldown_seconds(self, request_kind: str) -> int:
         """Return the minimum cooldown to apply after a 429."""
-        if request_kind == REQUEST_KIND_PIE_DETAIL:
-            return self.request_pacing_seconds(REQUEST_KIND_PIE_DETAIL)
+        if request_kind in {REQUEST_KIND_PIE_LIST, REQUEST_KIND_PIE_DETAIL}:
+            return self.request_pacing_seconds(request_kind)
         return _minimum_rate_limit_cooldown_seconds(request_kind)
 
     def _fallback_rate_limit_cooldown_seconds(self, request_kind: str) -> int:
         """Return the fallback cooldown to apply after a 429."""
         if request_kind == REQUEST_KIND_PIE_DETAIL:
+            return max(PIE_DETAIL_PACING_SECONDS, self.request_pacing_seconds(request_kind))
+        if request_kind == REQUEST_KIND_PIE_LIST:
             return max(
-                fallback_rate_limit_cooldown_seconds_for_group(ENDPOINT_GROUP_PIES),
-                self.request_pacing_seconds(REQUEST_KIND_PIE_DETAIL),
+                ENDPOINT_GROUP_MIN_REFRESH_SECONDS[ENDPOINT_GROUP_PIES],
+                self.request_pacing_seconds(request_kind),
             )
         return _fallback_rate_limit_cooldown_seconds_for_request_kind(request_kind)
 
@@ -248,38 +272,122 @@ class Trading212Client:
         if err.retry_after_seconds is None:
             return
 
-        current = self.request_pacing_seconds(REQUEST_KIND_PIE_DETAIL)
-        learned = max(current, err.retry_after_seconds)
+        self._learn_request_pacing_seconds(
+            REQUEST_KIND_PIE_DETAIL,
+            err.retry_after_seconds,
+            source="rate limit response",
+        )
+
+    def learn_request_pacing_from_cooldown(
+        self,
+        request_kind: str,
+        cooldown_seconds: int | None,
+        *,
+        source: str,
+    ) -> None:
+        """Increase learned pacing from an applied safe cooldown window."""
+        self._learn_request_pacing_seconds(request_kind, cooldown_seconds, source=source)
+
+    def pie_hydration_status(self) -> dict[str, int | bool]:
+        """Return non-sensitive pie hydration counts for logging and diagnostics."""
+        return {
+            "list_loaded": self._pie_list_loaded,
+            "list_count": len(self._latest_pies),
+            "hydrated_count": len(self._pie_detail_cache),
+            "pending_count": len(self._pending_pie_detail_ids),
+            "pacing_seconds": self.request_pacing_seconds(REQUEST_KIND_PIE_DETAIL),
+        }
+
+    def _learn_request_pacing_seconds(
+        self,
+        request_kind: str,
+        seconds: int | None,
+        *,
+        source: str,
+    ) -> None:
+        """Raise learned pacing conservatively for one request kind."""
+        if request_kind not in {REQUEST_KIND_PIE_LIST, REQUEST_KIND_PIE_DETAIL}:
+            return
+        if seconds is None:
+            return
+        minimum_seconds = (
+            ENDPOINT_GROUP_MIN_REFRESH_SECONDS[ENDPOINT_GROUP_PIES]
+            if request_kind == REQUEST_KIND_PIE_LIST
+            else PIE_DETAIL_PACING_SECONDS
+        )
+        learned = max(
+            self.request_pacing_seconds(request_kind),
+            int(seconds),
+            minimum_seconds,
+        )
+        current = self.request_pacing_seconds(request_kind)
         if learned == current:
             return
-
-        self._learned_request_pacing_seconds[REQUEST_KIND_PIE_DETAIL] = learned
+        self._learned_request_pacing_seconds[request_kind] = learned
         _LOGGER.warning(
-            "Trading 212 pie detail requests are rate limited; learned pacing is now %s seconds",
+            "Trading 212 %s pacing increased to %s seconds from %s",
+            request_kind.replace("_", " "),
             learned,
+            source,
         )
 
     def _pie_detail_request_ready(self) -> bool:
         """Return whether the learned pacing window allows another detail request."""
-        last_request_at = self._last_pie_detail_request_at
-        if last_request_at is None:
-            return True
-        now = datetime.now(UTC)
-        return now >= last_request_at + timedelta(
-            seconds=self.request_pacing_seconds(REQUEST_KIND_PIE_DETAIL)
-        )
+        return self._request_ready(REQUEST_KIND_PIE_DETAIL)
 
     def seconds_until_next_pie_detail_request(self) -> int:
         """Return seconds until the next learned pacing window opens."""
-        last_request_at = self._last_pie_detail_request_at
-        if last_request_at is None:
+        return self.seconds_until_next_request(REQUEST_KIND_PIE_DETAIL)
+
+    def seconds_until_next_request(self, request_kind: str) -> int:
+        """Return seconds until the next request-kind window opens."""
+        now = datetime.now(UTC)
+        remaining_windows: list[float] = []
+
+        last_request_at = self._last_request_at.get(request_kind)
+        if last_request_at is not None:
+            remaining_windows.append(
+                (
+                    last_request_at
+                    + timedelta(seconds=self.request_pacing_seconds(request_kind))
+                    - now
+                ).total_seconds()
+            )
+
+        next_allowed_at = self._next_allowed_request_at.get(request_kind)
+        if next_allowed_at is not None:
+            remaining_windows.append((next_allowed_at - now).total_seconds())
+
+        if not remaining_windows:
             return 0
-        remaining = (
-            last_request_at
-            + timedelta(seconds=self.request_pacing_seconds(REQUEST_KIND_PIE_DETAIL))
-            - datetime.now(UTC)
-        ).total_seconds()
-        return max(int(math.ceil(remaining)), 0)
+        return max(int(math.ceil(max(remaining_windows))), 0)
+
+    def _request_ready(self, request_kind: str) -> bool:
+        """Return whether a request kind is outside both pacing and lockout windows."""
+        return self.seconds_until_next_request(request_kind) <= 0
+
+    def _raise_if_request_locked(
+        self,
+        request_kind: str,
+        path: str,
+        *,
+        partial_data: Any,
+    ) -> None:
+        """Raise a local cooldown error when prior headers already told us to wait."""
+        retry_after_seconds = self.seconds_until_next_request(request_kind)
+        if retry_after_seconds <= 0:
+            return
+        retry_at = datetime.now(UTC) + timedelta(seconds=retry_after_seconds)
+        raise Trading212RateLimitError(
+            "Trading 212 API rate limit cooling down",
+            path=path,
+            retry_after_seconds=retry_after_seconds,
+            retry_at=retry_at,
+            endpoint_group=_endpoint_group_for_request_kind(request_kind),
+            request_kind=request_kind,
+            cooldown_source="cached_headers",
+            partial_data=partial_data,
+        )
 
     def _refresh_pending_pie_detail_ids(self, pies: list[dict[str, Any]]) -> None:
         """Refresh the pending pie detail queue from the latest list response."""
@@ -361,6 +469,7 @@ class Trading212Client:
     async def _get_json(self, path: str) -> Any:
         """GET JSON from a known read-only Trading 212 endpoint."""
         url = f"{self._base_url}{path}"
+        request_kind = _request_kind_for_path(path)
 
         try:
             async with self._session.get(
@@ -370,7 +479,9 @@ class Trading212Client:
                 timeout=REQUEST_TIMEOUT_SECONDS,
             ) as response:
                 await self._raise_for_status(response, path)
-                return await response.json(content_type=None)
+                data = await response.json(content_type=None)
+                self._record_request_success(request_kind, response)
+                return data
         except Trading212Error:
             raise
         except (ClientError, TimeoutError, asyncio.TimeoutError) as err:
@@ -394,6 +505,12 @@ class Trading212Client:
                 minimum_seconds=self._minimum_rate_limit_cooldown_seconds(request_kind),
                 fallback_seconds=self._fallback_rate_limit_cooldown_seconds(request_kind),
             )
+            self._record_rate_limit_response(
+                request_kind,
+                response,
+                retry_after_seconds=retry_after_seconds,
+                retry_at=retry_at,
+            )
             raise Trading212RateLimitError(
                 "Trading 212 API rate limit reached",
                 path=path,
@@ -412,6 +529,73 @@ class Trading212Client:
             safe_body,
         )
         raise Trading212Error(f"Trading 212 API returned HTTP {response.status}")
+
+    def _record_request_success(
+        self,
+        request_kind: str,
+        response: ClientResponse,
+    ) -> None:
+        """Record a successful response for steady pacing and temporary lockout."""
+        now = datetime.now(UTC)
+        self._last_request_at[request_kind] = now
+        self._last_rate_limit_headers[request_kind] = _rate_limit_header_snapshot(
+            response,
+            now=now,
+        )
+        steady_pacing_seconds = _header_pacing_seconds(response)
+        if steady_pacing_seconds is not None:
+            self._learn_request_pacing_seconds(
+                request_kind,
+                steady_pacing_seconds,
+                source="response rate-limit headers",
+            )
+        remaining = _header_integer(
+            response,
+            "X-RateLimit-Remaining",
+            "RateLimit-Remaining",
+        )
+        retry_after_seconds = _header_retry_window_seconds(response, now=now)
+        if remaining is not None and remaining > 0 and retry_after_seconds is None:
+            return
+        if retry_after_seconds is not None:
+            self._set_next_allowed_request_at(
+                request_kind,
+                now + timedelta(seconds=retry_after_seconds),
+            )
+
+    def _record_rate_limit_response(
+        self,
+        request_kind: str,
+        response: ClientResponse,
+        *,
+        retry_after_seconds: int,
+        retry_at: datetime,
+    ) -> None:
+        """Record a 429 response without clearing existing cached data."""
+        now = datetime.now(UTC)
+        self._last_request_at[request_kind] = now
+        self._last_rate_limit_headers[request_kind] = _rate_limit_header_snapshot(
+            response,
+            now=now,
+        )
+        steady_pacing_seconds = _header_pacing_seconds(response)
+        if steady_pacing_seconds is not None:
+            self._learn_request_pacing_seconds(
+                request_kind,
+                steady_pacing_seconds,
+                source="429 rate-limit headers",
+            )
+        self._set_next_allowed_request_at(request_kind, retry_at)
+
+    def _set_next_allowed_request_at(
+        self,
+        request_kind: str,
+        retry_at: datetime,
+    ) -> None:
+        """Store the farthest known lockout time for one request kind."""
+        existing = self._next_allowed_request_at.get(request_kind)
+        if existing is None or retry_at > existing:
+            self._next_allowed_request_at[request_kind] = retry_at
 
 
 def _parse_rate_limit_retry(
@@ -503,6 +687,72 @@ def _first_header_seconds(response_headers, *, now: datetime | None = None) -> i
         if parsed is not None:
             return parsed
     return None
+
+
+def _header_integer(response: ClientResponse, *keys: str) -> int | None:
+    """Return the first integer header value from the provided keys."""
+    for key in keys:
+        value = response.headers.get(key)
+        if value is None:
+            continue
+        try:
+            return int(float(value.strip()))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return None
+
+
+def _header_retry_window_seconds(
+    response: ClientResponse,
+    *,
+    now: datetime | None = None,
+) -> int | None:
+    """Return a temporary lockout window from response headers."""
+    retry_after_seconds = _parse_retry_after_header(
+        response.headers.get("Retry-After"),
+        now=now,
+    )
+    header_seconds = _first_header_seconds(response.headers, now=now)
+    candidates = [value for value in (retry_after_seconds, header_seconds) if value is not None]
+    if not candidates:
+        return None
+    return max(candidates) + RATE_LIMIT_SAFETY_BUFFER_SECONDS
+
+
+def _header_pacing_seconds(response: ClientResponse) -> int | None:
+    """Return steady pacing derived from limit/period headers."""
+    limit = _header_integer(response, "X-RateLimit-Limit", "RateLimit-Limit")
+    period = _header_integer(response, "X-RateLimit-Period", "RateLimit-Period")
+    if limit is None or period is None or limit <= 0 or period <= 0:
+        return None
+    return int(math.ceil(period / limit)) + RATE_LIMIT_SAFETY_BUFFER_SECONDS
+
+
+def _rate_limit_header_snapshot(
+    response: ClientResponse,
+    *,
+    now: datetime | None = None,
+) -> dict[str, int | str | None]:
+    """Return a bounded snapshot of response rate-limit headers."""
+    return {
+        "retry_after_seconds": _parse_retry_after_header(
+            response.headers.get("Retry-After"),
+            now=now,
+        ),
+        "limit": _header_integer(response, "X-RateLimit-Limit", "RateLimit-Limit"),
+        "period_seconds": _header_integer(
+            response,
+            "X-RateLimit-Period",
+            "RateLimit-Period",
+        ),
+        "remaining": _header_integer(
+            response,
+            "X-RateLimit-Remaining",
+            "RateLimit-Remaining",
+        ),
+        "reset_seconds": _first_header_seconds(response.headers, now=now),
+        "used": _header_integer(response, "X-RateLimit-Used", "RateLimit-Used"),
+    }
 
 
 def _parse_seconds_or_epoch(value: str, *, now: datetime | None = None) -> int | None:
@@ -775,19 +1025,46 @@ def _pie_id(pie: dict[str, Any]) -> str | None:
             return value.strip()
         if isinstance(value, int):
             return str(value)
+    settings = pie.get("settings")
+    if isinstance(settings, dict):
+        for key in ("id", "pieId"):
+            value = settings.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, int):
+                return str(value)
     return None
+
+
+def _format_pie_detail_path_id(pie_id: str | int) -> str:
+    """Return the API path identifier for one pie detail request."""
+    if isinstance(pie_id, int):
+        return f"0x{pie_id:x}"
+    pie_id_text = str(pie_id).strip()
+    if not pie_id_text:
+        return pie_id_text
+    if pie_id_text.lower().startswith("0x"):
+        return f"0x{pie_id_text[2:].lower()}"
+    if pie_id_text.isdigit():
+        return f"0x{int(pie_id_text):x}"
+    return pie_id_text
 
 
 def _merge_pie_list_and_detail(
     list_item: dict[str, Any],
     detail: dict[str, Any],
 ) -> dict[str, Any]:
-    """Merge list and detail payloads without exposing raw nested slices."""
+    """Merge list and detail payloads for internal summary building."""
     merged = dict(list_item)
     for key, value in detail.items():
         if key in {"instruments", "slices", "holdings"} and isinstance(value, list):
             merged[f"{key}Count"] = len(value)
+            merged[key] = value
             continue
         merged[key] = value
+    if "id" not in merged:
+        pie_id = _pie_id(detail)
+        if pie_id is not None:
+            merged["id"] = pie_id
     merged["detail_status"] = "fetched"
     return merged

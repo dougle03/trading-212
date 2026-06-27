@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026.06.22
+
+- Fixed daily market P/L fallback to use holdings-value baseline deltas when explicit daily position fields are unavailable.
+- Fixed bounded pie `top_slices` population after successful pie detail hydration.
+
+## 2026.06.21
+
+- Separated holdings-only portfolio movement from cash-inclusive account change.
+- Clarified pie holding value versus pie total value including cash.
+- Added bounded pie slice summaries without mixing pie instruments into global holdings data.
+
+## 2026.06.20
+
+- Added a first-release-candidate custom Lovelace Trading 212 dashboard card
+  under `cards/`.
+
 ## 2026.06.19
 
 - Fixed saved option handling across reloads and version updates.

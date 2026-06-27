@@ -60,7 +60,10 @@
         "name": "Free funds"
       },
       "invested": {
-        "name": "Invested"
+        "name": "Invested cost"
+      },
+      "holdings_value": {
+        "name": "Holdings value"
       },
       "result": {
         "name": "Result"
@@ -72,10 +75,16 @@
         "name": "Open positions"
       },
       "daily_gain_loss": {
-        "name": "Daily gain/loss"
+        "name": "Daily market P/L"
       },
       "daily_gain_loss_percent": {
-        "name": "Daily gain/loss percent"
+        "name": "Daily market P/L percent"
+      },
+      "account_change": {
+        "name": "Account change"
+      },
+      "account_change_percent": {
+        "name": "Account change percent"
       },
       "top_daily_mover": {
         "name": "Top daily mover"
@@ -126,7 +135,10 @@
         "name": "Pies count"
       },
       "total_pies_value": {
-        "name": "Total pies value"
+        "name": "Total pies holding value"
+      },
+      "total_pies_total_value_including_cash": {
+        "name": "Total pies value including cash"
       },
       "total_pies_cash": {
         "name": "Total pies cash"
@@ -138,7 +150,7 @@
         "name": "Largest pie"
       },
       "largest_pie_value": {
-        "name": "Largest pie value"
+        "name": "Largest pie holding value"
       },
       "last_pie_update_time": {
         "name": "Last pie update time"

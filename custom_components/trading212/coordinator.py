@@ -21,6 +21,8 @@ from .api import (
     MAX_PIE_DETAIL_FETCHES_PER_REFRESH,
     MIN_RATE_LIMIT_COOLDOWN_SECONDS,
     PIE_HYDRATION_CYCLE_SECONDS,
+    REQUEST_KIND_PIE_DETAIL,
+    REQUEST_KIND_PIE_LIST,
     RATE_LIMIT_SAFETY_BUFFER_SECONDS,
     Trading212AuthError,
     Trading212Client,
@@ -304,6 +306,13 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             invested = round(invested, 2)
         if result is not None:
             result = round(result, 2)
+        holdings_value = _round_money(
+            sum(
+                value
+                for position in positions
+                if (value := _position_current_value(position)) is not None
+            )
+        )
 
         now_utc = dt_util.utcnow()
         now_local = dt_util.as_local(now_utc)
@@ -317,6 +326,7 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             baseline=baseline,
             positions=positions,
             current_account_value=_first_number(summary, "totalValue"),
+            current_holdings_value=holdings_value,
             currency=_first_string(summary, "currency") or "GBP",
             last_update=now_utc,
             display_format=self.position_display_format,
@@ -340,9 +350,37 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "summary": summary,
             "positions": positions,
             "account_value": _first_number(summary, "totalValue"),
+            "account_value_attrs": _account_value_attributes(
+                account_value=_first_number(summary, "totalValue"),
+                holdings_value=holdings_value,
+                cash=cash_total,
+                free_funds=cash_available,
+                invested_cost=invested,
+                currency=_first_string(summary, "currency") or "GBP",
+                last_update=now_utc,
+            ),
             "cash": cash_total,
+            "cash_attrs": _cash_attributes(
+                cash_total=cash_total,
+                free_funds=cash_available,
+                currency=_first_string(summary, "currency") or "GBP",
+                last_update=now_utc,
+            ),
             "free_funds": cash_available,
+            "free_funds_attrs": _free_funds_attributes(
+                free_funds=cash_available,
+                cash_total=cash_total,
+                currency=_first_string(summary, "currency") or "GBP",
+                last_update=now_utc,
+            ),
             "invested": invested,
+            "invested_attrs": _invested_cost_attributes(
+                invested_cost=invested,
+                holdings_value=holdings_value,
+                currency=_first_string(summary, "currency") or "GBP",
+                last_update=now_utc,
+            ),
+            "holdings_value": holdings_value,
             "result": result,
             "result_percent": result_percent,
             "open_positions": len(positions),
@@ -389,6 +427,14 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     await asyncio.sleep(PIE_HYDRATION_CYCLE_SECONDS)
                     continue
 
+                counts = self.client.pie_hydration_status()
+                _LOGGER.debug(
+                    "Trading 212 pie hydrator cycle started: list=%s hydrated=%s pending=%s pacing=%ss",
+                    counts["list_count"],
+                    counts["hydrated_count"],
+                    counts["pending_count"],
+                    counts["pacing_seconds"],
+                )
                 await self._async_publish_pie_payload(payload, phase="detail_fetch")
 
                 while self._pie_hydrator_enabled:
@@ -399,8 +445,13 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if not self.client._pie_detail_request_ready():
                         wait_seconds = self.client.seconds_until_next_pie_detail_request()
                         self._pie_hydrator_phase = "detail_fetch"
+                        counts = self.client.pie_hydration_status()
                         _LOGGER.debug(
-                            "Trading 212 pie detail hydration paused; waiting for learned pacing window"
+                            "Trading 212 pie hydration paused for pacing: wait=%ss hydrated=%s pending=%s pacing=%ss",
+                            wait_seconds,
+                            counts["hydrated_count"],
+                            counts["pending_count"],
+                            counts["pacing_seconds"],
                         )
                         await self._async_publish_pie_payload(
                             self.client.current_pies_payload(
@@ -427,9 +478,12 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         break
 
                     await self._async_publish_pie_payload(payload, phase="detail_fetch")
+                    counts = self.client.pie_hydration_status()
                     _LOGGER.debug(
-                        "Trading 212 pie detail fetched for %s",
-                        self._pie_hydrator_current_pie_id,
+                        "Trading 212 pie detail hydrated: hydrated=%s pending=%s pacing=%ss",
+                        counts["hydrated_count"],
+                        counts["pending_count"],
+                        counts["pacing_seconds"],
                     )
 
                 if not self._pie_hydrator_enabled:
@@ -444,7 +498,13 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self.client.current_pies_payload(),
                     phase="complete",
                 )
-                _LOGGER.debug("Trading 212 pie hydration cycle completed")
+                counts = self.client.pie_hydration_status()
+                _LOGGER.debug(
+                    "Trading 212 pie hydration cycle completed: hydrated=%s pending=%s pacing=%ss",
+                    counts["hydrated_count"],
+                    counts["pending_count"],
+                    counts["pacing_seconds"],
+                )
                 await asyncio.sleep(PIE_HYDRATION_CYCLE_SECONDS)
         except asyncio.CancelledError:
             raise
@@ -463,6 +523,11 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             err,
             now,
             ENDPOINT_GROUP_PIES,
+        )
+        self.client.learn_request_pacing_from_cooldown(
+            "pie_detail" if err.request_kind is None else err.request_kind,
+            retry_after_seconds,
+            source="applied cooldown window",
         )
         state.data = _merge_pie_group_data(state.data, payload)
         state.last_failure = now.isoformat()
@@ -572,10 +637,14 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if state.cooldown_until == state._logged_cooldown_until:
             return
         state._logged_cooldown_until = state.cooldown_until
+        counts = self.client.pie_hydration_status()
         _LOGGER.warning(
-            "Trading 212 endpoint group %s is rate limited; cooling down for %s seconds",
+            "Trading 212 endpoint group %s is rate limited; cooling down for %s seconds (hydrated=%s pending=%s pacing=%ss)",
             group,
             state.retry_after_seconds,
+            counts["hydrated_count"],
+            counts["pending_count"],
+            counts["pacing_seconds"],
         )
 
     def _pie_features_enabled(self) -> bool:
@@ -601,6 +670,13 @@ class Trading212DataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "date": local_date,
             "baseline_time": baseline_time,
             "account_value": _round_money(_first_number(summary, "totalValue")),
+            "holdings_value": _round_money(
+                sum(
+                    value
+                    for position in positions
+                    if (value := _position_current_value(position)) is not None
+                )
+            ),
             "positions": _build_position_baseline(positions),
         }
         self._daily_baseline = baseline
@@ -738,6 +814,13 @@ def _rate_limit_retry_window(
     group: str,
 ) -> tuple[int, Any]:
     """Return retry-after seconds and absolute retry time for a rate limit."""
+    if group == ENDPOINT_GROUP_PIES and err.request_kind in {
+        REQUEST_KIND_PIE_LIST,
+        REQUEST_KIND_PIE_DETAIL,
+    }:
+        if err.retry_after_seconds is not None and err.retry_at is not None:
+            return err.retry_after_seconds, err.retry_at
+
     fallback_seconds = fallback_rate_limit_cooldown_seconds_for_group(group)
     retry_after_seconds, retry_at, _used_fallback = normalise_rate_limit_retry(
         retry_after_seconds=err.retry_after_seconds,
@@ -767,12 +850,12 @@ def _build_pies_summary(
         for pie in pies
         if (entry := _pie_summary_entry(pie, currency, last_update)) is not None
     ]
-    value_entries = [entry for entry in entries if entry.get("value") is not None]
+    value_entries = [entry for entry in entries if entry.get("holding_value") is not None]
     cash_entries = [entry for entry in entries if entry.get("cash") is not None]
     result_entries = [entry for entry in entries if entry.get("result") is not None]
 
     total_value = (
-        _round_money(sum(float(entry["value"]) for entry in value_entries))
+        _round_money(sum(float(entry["holding_value"]) for entry in value_entries))
         if value_entries
         else None
     )
@@ -786,17 +869,25 @@ def _build_pies_summary(
         if result_entries
         else None
     )
+    total_value_including_cash = None
+    if total_value is not None or total_cash is not None:
+        total_value_including_cash = _round_money(
+            (total_value or 0) + (total_cash or 0)
+        )
     largest_pie = max(
         value_entries,
-        key=lambda entry: float(entry["value"]),
+        key=lambda entry: float(entry["holding_value"]),
         default=None,
     )
 
     last_pie_update = _latest_pie_update(entries)
+    compact_pies = entries[:5]
     aggregate_attrs = {
         "pies_with_value": len(value_entries),
         "pies_with_cash": len(cash_entries),
         "pies_with_result": len(result_entries),
+        "positions_scope": "aggregate_account_positions_only",
+        "pies_scope": "per_pie_summaries_with_bounded_slice_data",
         "pie_list_count": _safe_int(pie_group.get("list_count")),
         "pie_detail_count": _safe_int(pie_group.get("detail_count")),
         "pie_detail_pending_count": _safe_int(pie_group.get("detail_pending_count")),
@@ -813,18 +904,21 @@ def _build_pies_summary(
         "pie_detail_complete": bool(pie_group.get("complete")),
         "currency": currency,
         "last_update": last_update.isoformat(),
+        "pies": compact_pies,
     }
 
     return {
         "pies_count": len(entries),
         "total_pies_value": total_value,
+        "total_pies_total_value_including_cash": total_value_including_cash,
         "total_pies_cash": total_cash,
         "total_pies_result": total_result,
         "largest_pie": _entity_state(largest_pie),
-        "largest_pie_value": _entry_number(largest_pie, "value"),
+        "largest_pie_value": _entry_number(largest_pie, "holding_value"),
         "last_pie_update_time": last_pie_update,
         "pies_count_attrs": aggregate_attrs,
         "total_pies_value_attrs": aggregate_attrs,
+        "total_pies_total_value_including_cash_attrs": aggregate_attrs,
         "total_pies_cash_attrs": aggregate_attrs,
         "total_pies_result_attrs": aggregate_attrs,
         "largest_pie_attrs": _pie_summary_attributes(largest_pie),
@@ -850,12 +944,28 @@ def _pie_summary_entry(
             "currentValue",
             "totalValue",
             "marketValue",
+            "priceAvgValue",
         )
     )
     cash = _round_money(
         _first_nested_number(pie, "cash", "availableCash", "cashValue")
     )
+    total_value_including_cash = None
+    if value is not None or cash is not None:
+        total_value_including_cash = _round_money((value or 0) + (cash or 0))
     result = _round_money(_pie_result(pie))
+    result_percent = None
+    invested_value = _round_money(
+        _first_nested_number(
+            pie,
+            "priceAvgInvestedValue",
+            "investedValue",
+            "totalCost",
+            "cost",
+        )
+    )
+    if result is not None and invested_value not in (None, 0):
+        result_percent = round((result / invested_value) * 100, 2)
     updated_at = _first_string(
         pie,
         "lastUpdated",
@@ -867,14 +977,17 @@ def _pie_summary_entry(
     return {
         "state": label,
         "pie_id": _pie_id(pie),
-        "value": value,
+        "holding_value": value,
         "cash": cash,
+        "total_value_including_cash": total_value_including_cash,
         "result": result,
+        "result_percent": result_percent,
         "currency": _first_string(pie, "currency") or currency,
         "created_at": _first_string(pie, "createdAt", "creationDate"),
         "updated_at": updated_at,
         "last_update": last_update.isoformat(),
         "source": _first_string(pie, "detail_status") or "list",
+        "top_slices": _pie_top_slices(pie, currency),
     }
 
 
@@ -884,14 +997,17 @@ def _pie_summary_attributes(entry: dict[str, Any] | None) -> dict[str, Any]:
         return {}
     return {
         "pie_id": entry.get("pie_id"),
-        "value": entry.get("value"),
+        "holding_value": entry.get("holding_value"),
         "cash": entry.get("cash"),
+        "total_value_including_cash": entry.get("total_value_including_cash"),
         "result": entry.get("result"),
+        "result_percent": entry.get("result_percent"),
         "currency": entry.get("currency"),
         "created_at": entry.get("created_at"),
         "updated_at": entry.get("updated_at"),
         "last_update": entry.get("last_update"),
         "source": entry.get("source"),
+        "top_slices": entry.get("top_slices"),
     }
 
 
@@ -921,6 +1037,14 @@ def _pie_id(pie: dict[str, Any]) -> str | None:
             return value.strip()
         if isinstance(value, int):
             return str(value)
+    settings = pie.get("settings")
+    if isinstance(settings, dict):
+        for key in ("id", "pieId"):
+            value = settings.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, int):
+                return str(value)
     return None
 
 
@@ -932,6 +1056,7 @@ def _pie_result(pie: dict[str, Any]) -> float | None:
         "profitLoss",
         "unrealizedProfitLoss",
         "unrealisedProfitLoss",
+        "priceAvgResult",
     )
     if result is not None:
         return result
@@ -945,6 +1070,7 @@ def _pie_result(pie: dict[str, Any]) -> float | None:
             "profitLoss",
             "unrealizedProfitLoss",
             "unrealisedProfitLoss",
+            "priceAvgResult",
         )
     return None
 
@@ -993,7 +1119,7 @@ def _build_positions_summary(
         sum(float(entry["value"]) for entry in value_entries),
         2,
     )
-    portfolio_value = account_value
+    portfolio_value = total_position_value if total_position_value != 0 else account_value
     if portfolio_value in (None, 0) and total_position_value != 0:
         portfolio_value = total_position_value
 
@@ -1064,6 +1190,7 @@ def _build_positions_summary(
         "largest_position_percentage_attrs": _position_summary_attributes(
             largest_position
         ),
+        "holdings_value": _round_money(total_position_value) if value_entries else None,
         "top_5_position_concentration_percentage_attrs": {
             "positions_counted": min(len(value_entries), 5),
             "total_positions_with_value": len(value_entries),
@@ -1221,35 +1348,52 @@ def _build_daily_summary(
     baseline: dict[str, Any],
     positions: list[dict[str, Any]],
     current_account_value: float | None,
+    current_holdings_value: float | None,
     currency: str,
     last_update,
     display_format: str,
 ) -> dict[str, Any]:
     """Build summary-only daily movement data for the sensors."""
-    opening_value = _safe_number(baseline.get("account_value"))
-    current_value = _round_money(current_account_value)
+    mover_entries: list[dict[str, Any]] = []
+    for position in positions:
+        entry = _position_market_daily_entry(
+            position=position,
+            current_holdings_value=current_holdings_value,
+            currency=currency,
+            baseline_time=baseline.get("baseline_time"),
+            last_update=last_update,
+            display_format=display_format,
+        )
+        if entry is not None:
+            mover_entries.append(entry)
+
     change_value = None
     change_percent = None
-    if opening_value is not None and current_value is not None:
-        change_value = round(current_value - opening_value, 2)
-        if opening_value != 0:
-            change_percent = round((change_value / opening_value) * 100, 2)
+    opening_holdings_value = _safe_number(baseline.get("holdings_value"))
+    if mover_entries:
+        change_value = _round_money(
+            sum(float(entry["change_value"]) for entry in mover_entries)
+        )
+        if current_holdings_value is not None and change_value is not None:
+            opening_holdings_value = _round_money(current_holdings_value - change_value)
+        if opening_holdings_value not in (None, 0) and change_value is not None:
+            change_percent = round((change_value / opening_holdings_value) * 100, 2)
+    elif opening_holdings_value is not None and current_holdings_value is not None:
+        change_value = _round_money(current_holdings_value - opening_holdings_value)
+        if opening_holdings_value != 0 and change_value is not None:
+            change_percent = round((change_value / opening_holdings_value) * 100, 2)
 
-    mover_entries: list[dict[str, Any]] = []
-    baseline_positions = baseline.get("positions", {})
-    if isinstance(baseline_positions, dict):
-        for position in positions:
-            entry = _position_movement_entry(
-                position=position,
-                baseline_positions=baseline_positions,
-                opening_portfolio_value=opening_value,
-                currency=currency,
-                baseline_time=baseline.get("baseline_time"),
-                last_update=last_update,
-                display_format=display_format,
+    opening_account_value = _safe_number(baseline.get("account_value"))
+    current_account_value = _round_money(current_account_value)
+    account_change = None
+    account_change_percent = None
+    if opening_account_value is not None and current_account_value is not None:
+        account_change = round(current_account_value - opening_account_value, 2)
+        if opening_account_value != 0:
+            account_change_percent = round(
+                (account_change / opening_account_value) * 100,
+                2,
             )
-            if entry is not None:
-                mover_entries.append(entry)
 
     top_mover = max(
         (entry for entry in mover_entries if entry.get("change_percent") is not None),
@@ -1283,15 +1427,105 @@ def _build_daily_summary(
     return {
         "daily_gain_loss": change_value,
         "daily_gain_loss_percent": change_percent,
+        "account_change": account_change,
+        "account_change_percent": account_change_percent,
         "top_daily_mover": _entity_state(top_mover),
         "bottom_daily_mover": _entity_state(bottom_mover),
         "biggest_daily_gain_value": _entity_state(biggest_gain),
         "biggest_daily_loss_value": _entity_state(biggest_loss),
         "daily_gain_loss_attrs": _account_daily_attributes(
-            opening_value, current_value, change_value, change_percent, currency, baseline, last_update
+            opening_value=opening_holdings_value,
+            current_value=current_holdings_value,
+            change_value=change_value,
+            change_percent=change_percent,
+            currency=currency,
+            baseline=baseline,
+            last_update=last_update,
+            metric_name="daily_market_profit_loss",
+            calculation_method=(
+                "explicit_position_daily_fields"
+                if mover_entries
+                else "holdings_value_baseline_delta_excludes_cash"
+            ),
+            available=(
+                bool(mover_entries)
+                or (
+                    opening_holdings_value is not None
+                    and current_holdings_value is not None
+                )
+            ),
+            current_account_value=current_account_value,
+            opening_account_value=opening_account_value,
+            notes=(
+                []
+                if mover_entries
+                else [
+                    "fallback_uses_midnight_holdings_value_delta_excludes_cash",
+                    "intraday_trades_rebalances_or_deposits_into_holdings_can_affect_this_value",
+                ]
+            ),
         ),
         "daily_gain_loss_percent_attrs": _account_daily_attributes(
-            opening_value, current_value, change_value, change_percent, currency, baseline, last_update
+            opening_value=opening_holdings_value,
+            current_value=current_holdings_value,
+            change_value=change_value,
+            change_percent=change_percent,
+            currency=currency,
+            baseline=baseline,
+            last_update=last_update,
+            metric_name="daily_market_profit_loss_percent",
+            calculation_method=(
+                "explicit_position_daily_fields"
+                if mover_entries
+                else "holdings_value_baseline_delta_excludes_cash"
+            ),
+            available=(
+                bool(mover_entries)
+                or (
+                    opening_holdings_value is not None
+                    and current_holdings_value is not None
+                )
+            ),
+            current_account_value=current_account_value,
+            opening_account_value=opening_account_value,
+            notes=(
+                []
+                if mover_entries
+                else [
+                    "fallback_uses_midnight_holdings_value_delta_excludes_cash",
+                    "intraday_trades_rebalances_or_deposits_into_holdings_can_affect_this_value",
+                ]
+            ),
+        ),
+        "account_change_attrs": _account_daily_attributes(
+            opening_value=opening_account_value,
+            current_value=current_account_value,
+            change_value=account_change,
+            change_percent=account_change_percent,
+            currency=currency,
+            baseline=baseline,
+            last_update=last_update,
+            metric_name="daily_account_value_change",
+            calculation_method="account_value_baseline_delta_includes_cash",
+            available=opening_account_value is not None and current_account_value is not None,
+            current_account_value=current_account_value,
+            opening_account_value=opening_account_value,
+            notes=["cash_inclusive_account_value_delta"],
+        ),
+        "account_change_percent_attrs": _account_daily_attributes(
+            opening_value=opening_account_value,
+            current_value=current_account_value,
+            change_value=account_change,
+            change_percent=account_change_percent,
+            currency=currency,
+            baseline=baseline,
+            last_update=last_update,
+            metric_name="daily_account_value_change_percent",
+            calculation_method="account_value_baseline_delta_includes_cash",
+            available=opening_account_value is not None and current_account_value is not None,
+            current_account_value=current_account_value,
+            opening_account_value=opening_account_value,
+            notes=["cash_inclusive_account_value_delta"],
         ),
         "top_daily_mover_attrs": _mover_attributes(top_mover),
         "bottom_daily_mover_attrs": _mover_attributes(bottom_mover),
@@ -1300,38 +1534,26 @@ def _build_daily_summary(
     }
 
 
-def _position_movement_entry(
+def _position_market_daily_entry(
     *,
     position: dict[str, Any],
-    baseline_positions: dict[str, Any],
-    opening_portfolio_value: float | None,
+    current_holdings_value: float | None,
     currency: str,
     baseline_time: str | None,
     last_update,
     display_format: str,
 ) -> dict[str, Any] | None:
-    """Build movement data for one position when a same-day baseline exists."""
-    key = _position_key(position)
-    if key is None:
+    """Build movement data for one position when explicit daily fields are present."""
+    change_value = _position_daily_market_change(position)
+    if change_value is None:
         return None
 
-    opening = baseline_positions.get(key)
-    if not isinstance(opening, dict):
-        return None
-
-    opening_value = _safe_number(opening.get("value"))
-    current_value = _position_current_value(position)
-    if opening_value is None or current_value is None:
-        return None
-
-    change_value = round(current_value - opening_value, 2)
-    change_percent = None
-    if opening_value != 0:
-        change_percent = round((change_value / opening_value) * 100, 2)
+    change_value = _round_money(change_value)
+    change_percent = _position_daily_market_change_percent(position)
 
     portfolio_impact_percent = None
-    if opening_portfolio_value not in (None, 0):
-        portfolio_impact_percent = round((change_value / opening_portfolio_value) * 100, 2)
+    if current_holdings_value not in (None, 0) and change_value is not None:
+        portfolio_impact_percent = round((change_value / current_holdings_value) * 100, 2)
 
     return {
         "state": _position_label(position, display_format),
@@ -1339,7 +1561,7 @@ def _position_movement_entry(
         "name": _position_name(position),
         "change_value": change_value,
         "change_percent": change_percent,
-        "position_value": _round_money(current_value),
+        "position_value": _round_money(_position_current_value(position)),
         "currency": currency,
         "quantity": _position_quantity(position),
         "portfolio_impact_percent": portfolio_impact_percent,
@@ -1349,6 +1571,7 @@ def _position_movement_entry(
 
 
 def _account_daily_attributes(
+    *,
     opening_value: float | None,
     current_value: float | None,
     change_value: float | None,
@@ -1356,14 +1579,26 @@ def _account_daily_attributes(
     currency: str,
     baseline: dict[str, Any],
     last_update,
+    metric_name: str,
+    calculation_method: str,
+    available: bool,
+    current_account_value: float | None,
+    opening_account_value: float | None,
+    notes: list[str],
 ) -> dict[str, Any]:
     """Build shared account-level daily movement attributes."""
     return {
+        "metric_name": metric_name,
+        "available": available,
+        "calculation_method": calculation_method,
         "opening_value": opening_value,
         "current_value": current_value,
         "change_value": change_value,
         "change_percent": change_percent,
+        "opening_account_value": opening_account_value,
+        "current_account_value": current_account_value,
         "currency": currency,
+        "notes": notes,
         "baseline_time": baseline.get("baseline_time"),
         "last_update": last_update.isoformat(),
     }
@@ -1384,6 +1619,230 @@ def _mover_attributes(entry: dict[str, Any] | None) -> dict[str, Any]:
         "portfolio_impact_percent": entry.get("portfolio_impact_percent"),
         "baseline_time": entry.get("baseline_time"),
         "last_update": entry.get("last_update"),
+    }
+
+
+def _position_daily_market_change(position: dict[str, Any]) -> float | None:
+    """Return explicit daily market profit/loss when exposed by the API."""
+    wallet_impact = position.get("walletImpact")
+    if isinstance(wallet_impact, dict):
+        change = _first_number(
+            wallet_impact,
+            "dayProfitLoss",
+            "dailyProfitLoss",
+            "dayResult",
+            "dailyResult",
+            "todayProfitLoss",
+            "currentDayProfitLoss",
+            "oneDayProfitLoss",
+            "oneDayResult",
+            "profitLossDaily",
+        )
+        if change is not None:
+            return change
+    return _first_number(
+        position,
+        "dayProfitLoss",
+        "dailyProfitLoss",
+        "dayResult",
+        "dailyResult",
+        "todayProfitLoss",
+        "currentDayProfitLoss",
+        "oneDayProfitLoss",
+        "oneDayResult",
+        "profitLossDaily",
+    )
+
+
+def _position_daily_market_change_percent(position: dict[str, Any]) -> float | None:
+    """Return explicit daily market percentage movement when exposed by the API."""
+    wallet_impact = position.get("walletImpact")
+    if isinstance(wallet_impact, dict):
+        change_percent = _first_number(
+            wallet_impact,
+            "dayProfitLossPercent",
+            "dailyProfitLossPercent",
+            "dayResultPercent",
+            "dailyResultPercent",
+            "todayProfitLossPercent",
+            "currentDayProfitLossPercent",
+            "oneDayProfitLossPercent",
+            "oneDayResultPercent",
+            "profitLossDailyPercent",
+        )
+        if change_percent is not None:
+            return round(change_percent, 2)
+    change_percent = _first_number(
+        position,
+        "dayProfitLossPercent",
+        "dailyProfitLossPercent",
+        "dayResultPercent",
+        "dailyResultPercent",
+        "todayProfitLossPercent",
+        "currentDayProfitLossPercent",
+        "oneDayProfitLossPercent",
+        "oneDayResultPercent",
+        "profitLossDailyPercent",
+    )
+    if change_percent is not None:
+        return round(change_percent, 2)
+    return None
+
+
+def _pie_top_slices(
+    pie: dict[str, Any],
+    currency: str,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Return bounded pie slice data for one pie only."""
+    instruments = pie.get("instruments")
+    if not isinstance(instruments, list):
+        return []
+
+    slices: list[dict[str, Any]] = []
+    for instrument in instruments:
+        if not isinstance(instrument, dict):
+            continue
+        result_data = instrument.get("result")
+        result_value = None
+        result_percent = None
+        holding_value = None
+        if isinstance(result_data, dict):
+            holding_value = _round_money(
+                _first_number(result_data, "priceAvgValue", "value", "currentValue")
+            )
+            result_value = _round_money(
+                _first_number(
+                    result_data,
+                    "priceAvgResult",
+                    "profitLoss",
+                    "unrealizedProfitLoss",
+                    "unrealisedProfitLoss",
+                    "value",
+                )
+            )
+            result_percent = _first_number(
+                result_data,
+                "priceAvgResultCoef",
+                "resultPercent",
+            )
+            if result_percent is not None and abs(result_percent) <= 1:
+                result_percent = round(result_percent * 100, 2)
+            elif result_percent is not None:
+                result_percent = round(result_percent, 2)
+        slices.append(
+            {
+                "ticker": _first_string(instrument, "ticker"),
+                "name": _first_string(instrument, "name"),
+                "expected_share_percent": _share_to_percent(
+                    _first_number(instrument, "expectedShare")
+                ),
+                "current_share_percent": _share_to_percent(
+                    _first_number(instrument, "currentShare")
+                ),
+                "quantity": _round_quantity(_first_number(instrument, "ownedQuantity")),
+                "holding_value": holding_value,
+                "result": result_value,
+                "result_percent": result_percent,
+                "currency": currency,
+                "issues_count": len(instrument.get("issues", []))
+                if isinstance(instrument.get("issues"), list)
+                else 0,
+            }
+        )
+
+    return sorted(
+        slices,
+        key=lambda item: (
+            float(item["holding_value"])
+            if isinstance(item.get("holding_value"), int | float)
+            else float(item.get("current_share_percent") or 0.0)
+        ),
+        reverse=True,
+    )[:limit]
+
+
+def _share_to_percent(value: float | None) -> float | None:
+    """Convert fractional share values into percentage values."""
+    if value is None:
+        return None
+    return round(value * 100, 2)
+
+
+def _account_value_attributes(
+    *,
+    account_value: float | None,
+    holdings_value: float | None,
+    cash: float | None,
+    free_funds: float | None,
+    invested_cost: float | None,
+    currency: str,
+    last_update,
+) -> dict[str, Any]:
+    """Describe cash-inclusive account value semantics."""
+    return {
+        "meaning": "cash_inclusive_total_account_value",
+        "includes_cash": True,
+        "includes_holdings": True,
+        "account_value": _round_money(account_value),
+        "holdings_value": holdings_value,
+        "cash": cash,
+        "free_funds": free_funds,
+        "invested_cost": invested_cost,
+        "currency": currency,
+        "last_update": last_update.isoformat(),
+    }
+
+
+def _cash_attributes(
+    *,
+    cash_total: float | None,
+    free_funds: float | None,
+    currency: str,
+    last_update,
+) -> dict[str, Any]:
+    """Describe cash balance semantics."""
+    return {
+        "meaning": "cash_balance_including_pies_and_reserved_funds",
+        "cash": cash_total,
+        "free_funds": free_funds,
+        "currency": currency,
+        "last_update": last_update.isoformat(),
+    }
+
+
+def _free_funds_attributes(
+    *,
+    free_funds: float | None,
+    cash_total: float | None,
+    currency: str,
+    last_update,
+) -> dict[str, Any]:
+    """Describe free-funds semantics."""
+    return {
+        "meaning": "immediately_available_cash_free_funds",
+        "free_funds": free_funds,
+        "cash": cash_total,
+        "currency": currency,
+        "last_update": last_update.isoformat(),
+    }
+
+
+def _invested_cost_attributes(
+    *,
+    invested_cost: float | None,
+    holdings_value: float | None,
+    currency: str,
+    last_update,
+) -> dict[str, Any]:
+    """Describe invested cost-basis semantics."""
+    return {
+        "meaning": "invested_cost_basis_excluding_cash",
+        "invested_cost": invested_cost,
+        "holdings_value": holdings_value,
+        "currency": currency,
+        "last_update": last_update.isoformat(),
     }
 
 

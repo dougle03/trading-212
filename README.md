@@ -28,8 +28,25 @@ Use a read-only Trading 212 API token only. Enable only read permissions such as
 - Daily movement summary sensors
 - Optional pies summary sensors
 - Optional per-position sensors
+- Optional custom Lovelace dashboard card under `cards/`
 - Redacted diagnostics
 - Multiple accounts
+
+Daily market P/L is intended to represent holdings movement only. Cash-inclusive
+account movement is separate from market movement, so card spending or other
+cash changes should not be treated as investment performance. Pie summaries now
+separate holdings value from pie cash and total value including cash.
+
+## Custom Lovelace Card
+
+This repository also includes a frontend-only Trading 212 dashboard card RC in
+[`cards/`](cards/README.md). It reads the existing integration entities and does
+not add any write capability or backend API behaviour.
+
+The card is intentionally dense and bespoke rather than a composition of
+standard Home Assistant cards. It can use account summary, portfolio summary,
+daily mover, pie summary, and optional per-position entities when those are
+already exposed by the integration.
 
 ## Support
 
