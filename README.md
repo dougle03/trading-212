@@ -2,49 +2,24 @@
 
 A Home Assistant custom integration for monitoring Trading 212 account and portfolio summary data.
 
-Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.|Active development: see the [roadmap](docs/ROADMAP.md) for planned read-only feature ideas and areas where community feedback is welcome.
-
-## Status
-
-Current public release `2026.06.6`. Initial Home Assistant smoke test has passed with read-only API key and secret authentication.
-
-This integration is intended to remain strictly read-only.
-
-The project version tracks the full project history, including internal tooling and documentation changes. Public GitHub releases may occasionally skip intermediate versions where those versions were internal-only updates.
-
-## Safety boundary
-
-This integration is designed to be read-only for the public release.
-
-It must not include:
-
-- order placement
-- order cancellation
-- pie editing
-- deposits or withdrawals
-- write/mutation API calls
-- Home Assistant services that alter a Trading 212 account
-- Home Assistant buttons, selects, switches, or controls that change account state
-- generic raw API endpoint helpers
-
-Users should create a Trading 212 API key and API secret with read-only permissions, but this integration also enforces read-only behaviour by architecture.
+This integration is read-only. It does not place trades, cancel orders, edit pies, deposit, withdraw, or provide Home Assistant controls that mutate a Trading 212 account.
 
 This project is not affiliated with, endorsed by, or supported by Trading 212.
 
-Use read-only API permissions only.
+## Features
 
-API credentials are stored by Home Assistant as config entry data and are redacted from diagnostics.
-
-## Public release scope
-
+- Home Assistant config flow and options flow
 - HACS-compatible custom integration
-- Home Assistant config flow
-- Shared `DataUpdateCoordinator`
-- Compact account summary sensors
-- Open-position count only
+- Account summary sensors
+- Positions summary and portfolio insight sensors
+- Daily movement summary sensors based on a local Home Assistant day baseline
+- Optional pies summary sensors, disabled by default
 - Redacted diagnostics
+- Multi-account setup with labels for additional accounts
 
-## Initial sensors
+## Sensors
+
+Core sensors include:
 
 - Account value
 - Cash
@@ -53,27 +28,43 @@ API credentials are stored by Home Assistant as config entry data and are redact
 - Result
 - Result percent
 - Open positions
+- Last update
+
+Positions and daily movement sensors include:
+
 - Daily gain/loss
 - Daily gain/loss percent
 - Top daily mover
 - Bottom daily mover
 - Biggest daily gain value
 - Biggest daily loss value
-- Last update
+- Largest position
+- Largest position value
+- Largest position percentage
+- Top 5 position concentration
+- Positions in profit
+- Positions in loss
+- Total unrealised result
+- Best position
+- Best position result
+- Worst position
+- Worst position result
 
-Per-position entities are intentionally not created by default to avoid entity explosion.
+Optional pies summary sensors include:
 
-Daily movement is calculated from the integration's local Home Assistant day baseline, not Trading 212's official market-day performance figures.
+- Pies count
+- Total pies value
+- Total pies cash
+- Total pies result
+- Largest pie
+- Largest pie value
+- Last pie update time, when the API provides one
 
-## Installation during development
+Per-position entities, per-pie entities, and pie-slice entities are not created by default.
 
-See [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md) for the current manual development install steps.
+## Install With HACS
 
-Manual summary: copy `custom_components/trading212` into your Home Assistant `custom_components` directory, then restart Home Assistant.
-
-## Install with HACS
-
-Until this integration is listed in the default HACS store, add it as a custom repository:
+Until this integration is available through the default HACS store, add it as a custom repository:
 
 1. Open Home Assistant.
 2. Open HACS.
@@ -89,21 +80,29 @@ Until this integration is listed in the default HACS store, add it as a custom r
 9. Restart Home Assistant.
 10. Go to **Settings -> Devices & services -> Add integration** and search for **Trading 212**.
 
-This integration is being prepared for submission to the default HACS repository list. Once accepted, users will be able to find it directly in HACS without adding a custom repository URL.
+## Manual Installation
 
-This integration is strictly read-only. It does not place trades, cancel orders, edit pies, or expose account-changing Home Assistant services, buttons, switches, or selects.
-
-## Manual installation
-
-If you prefer not to use HACS yet, or want a fallback path:
+If you prefer not to use HACS:
 
 1. Copy `custom_components/trading212` into your Home Assistant `custom_components` directory.
 2. Restart Home Assistant.
 3. Go to **Settings -> Devices & services -> Add integration** and search for **Trading 212**.
 
-## Creating Trading 212 API credentials
+## Configuration
 
-Before setting up the integration, create a Trading 212 API key and secret in the Trading 212 web app:
+When adding the integration, provide:
+
+- API key
+- API secret
+- Environment, usually `live`
+- Update interval in seconds
+- Account label, required for additional accounts
+
+The first/default account keeps the normal Trading 212 entity naming pattern. Additional accounts should use labels so their entities remain distinct.
+
+## Creating API Credentials
+
+Create a Trading 212 API key and secret in the Trading 212 web app before adding the integration:
 
 1. Sign in at [https://app.trading212.com](https://app.trading212.com).
 2. Open `Settings` -> `API (Beta)` -> `Generate API key`.
@@ -119,11 +118,17 @@ Before setting up the integration, create a Trading 212 API key and secret in th
    - any other mutation or trading permission
 7. Save the generated API key and secret for use in Home Assistant.
 
-If you want screenshots, see the walkthrough in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md).
+Screenshots for the credential flow are in [docs/DEVELOPMENT_INSTALL.md](docs/DEVELOPMENT_INSTALL.md).
 
-HACS support is included for the public release.
+## Feature Options
 
-## Dashboard examples
+The options flow controls read-only feature groups.
+
+Account summary, positions summary, and daily movement are enabled by default. Pies summary is available but disabled by default. Per-position and per-pie entity groups are disabled by default to avoid creating a large number of entities.
+
+Pies endpoints may be cooldown-limited, so the integration uses endpoint-group throttling and cached last-good data for pies summary data.
+
+## Dashboard Examples
 
 Example dashboard YAML files are included at the repository root:
 
@@ -131,16 +136,23 @@ Example dashboard YAML files are included at the repository root:
 - [advanced_dashboard_card.yaml](advanced_dashboard_card.yaml)
 - [daily_movement_dashboard_card.yaml](daily_movement_dashboard_card.yaml)
 
-The simple example uses standard Home Assistant cards only.
+The simple example uses standard Home Assistant cards only. The advanced examples may require custom Lovelace cards noted in each file.
 
-The advanced example expects Mushroom, stack-in-card, ApexCharts Card, and the Trading 212 logo at `/local/images/212.png`.
+## Known Limitations
 
-The daily movement example expects Mushroom and stack-in-card and focuses on the new daily baseline summary sensors.
+- Daily movement is calculated from the integration's local Home Assistant day baseline, not Trading 212's official market-day performance figures.
+- Pies summary is optional and depends on the Trading 212 pies endpoint being available for the API token.
+- Per-position, per-pie, and pie-slice entities are not created by default.
+- The integration only reads Trading 212 API data; it does not manage accounts or execute actions.
 
-## Issues and feature requests
+## Security
 
-Use [GitHub Issues](https://github.com/dougle03/trading-212/issues) and choose the most relevant template for bug reports, read-only API data requests, dashboard examples, or feature ideas.
+Use a read-only Trading 212 API token only. Do not enable write, trading, deposit, withdrawal, order execution, or pie write permissions for this integration.
 
-Please do not paste API keys, API secrets, account identifiers, or sensitive financial details.
+See [SECURITY.md](SECURITY.md) for the security policy and reporting guidance.
 
-Roadmap feedback is welcome, especially for read-only features that stay within the integration's entity-bloat limits and safety boundary.
+## Support
+
+Use [GitHub Issues](https://github.com/dougle03/trading-212/issues) for bug reports, read-only API data requests, dashboard examples, and feature requests.
+
+Do not paste API keys, API secrets, account identifiers, or sensitive financial details into issues, logs, screenshots, or diagnostics.

@@ -68,6 +68,18 @@ class Trading212Client:
             raise Trading212Error("Unexpected positions response")
         return [item for item in data if isinstance(item, dict)]
 
+    async def get_pies(self) -> list[dict[str, Any]]:
+        """Return Trading 212 pies from the read-only pies endpoint."""
+        data = await self._get_json("/equity/pies")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            for key in ("pies", "items", "data", "results"):
+                items = data.get(key)
+                if isinstance(items, list):
+                    return [item for item in items if isinstance(item, dict)]
+        raise Trading212Error("Unexpected pies response")
+
     async def fetch_account_data(self) -> dict[str, Any]:
         """Fetch all data needed by the coordinator in one shared update."""
         summary, positions = await asyncio.gather(
@@ -79,6 +91,17 @@ class Trading212Client:
             "summary": summary,
             "positions": positions,
         }
+
+    async def fetch_endpoint_group(self, group: str) -> Any:
+        """Fetch a known read-only endpoint group."""
+        if group == "account_summary":
+            return await self.get_account_summary()
+        if group == "positions":
+            return await self.get_positions()
+        if group == "pies":
+            return await self.get_pies()
+
+        raise Trading212Error(f"Unsupported Trading 212 endpoint group: {group}")
 
     async def _get_json(self, path: str) -> Any:
         """GET JSON from a known read-only Trading 212 endpoint."""

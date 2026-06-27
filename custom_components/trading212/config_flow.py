@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any
+from typing import Any, Mapping
 
 from aiohttp import ClientSession
 import voluptuous as vol
@@ -28,9 +28,19 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     DEFAULT_ACCOUNT_LABEL,
     DEFAULT_ENVIRONMENT,
+    DEFAULT_FEATURE_OPTIONS,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
     ENVIRONMENT_URLS,
+    FEATURE_ACCOUNT_SUMMARY,
+    FEATURE_DIVIDENDS_SUMMARY,
+    FEATURE_MOVERS_DAILY,
+    FEATURE_OPTIONS,
+    FEATURE_ORDERS_SUMMARY,
+    FEATURE_PER_PIE_ENTITIES,
+    FEATURE_PER_POSITION_ENTITIES,
+    FEATURE_PIES_SUMMARY,
+    FEATURE_POSITIONS_SUMMARY,
     MIN_UPDATE_INTERVAL,
 )
 
@@ -41,6 +51,13 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Trading 212."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Create the options flow."""
+        return Trading212OptionsFlow(config_entry)
 
     async def async_step_user(
         self,
@@ -103,12 +120,35 @@ class Trading212ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_create_entry(
                         title=account_label or DEFAULT_ACCOUNT_LABEL,
                         data=data,
+                        options=dict(DEFAULT_FEATURE_OPTIONS),
                     )
 
         return self.async_show_form(
             step_id="user",
             data_schema=_user_schema(user_input, require_account_label),
             errors=errors,
+        )
+
+
+class Trading212OptionsFlow(config_entries.OptionsFlow):
+    """Handle Trading 212 feature options."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialise the options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Manage feature options."""
+        if user_input is not None:
+            options = _normalise_feature_options(user_input)
+            return self.async_create_entry(title="", data=options)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_options_schema(self._config_entry.options),
         )
 
 
@@ -163,6 +203,58 @@ def _user_schema(
         ] = str
 
     return vol.Schema(schema)
+
+
+def _options_schema(options: Mapping[str, Any] | None = None) -> vol.Schema:
+    """Return the options flow schema."""
+    suggested = _normalise_feature_options(options)
+    return vol.Schema(
+        {
+            vol.Required(
+                FEATURE_ACCOUNT_SUMMARY,
+                default=suggested[FEATURE_ACCOUNT_SUMMARY],
+            ): bool,
+            vol.Required(
+                FEATURE_POSITIONS_SUMMARY,
+                default=suggested[FEATURE_POSITIONS_SUMMARY],
+            ): bool,
+            vol.Required(
+                FEATURE_PER_POSITION_ENTITIES,
+                default=suggested[FEATURE_PER_POSITION_ENTITIES],
+            ): bool,
+            vol.Required(
+                FEATURE_PIES_SUMMARY,
+                default=suggested[FEATURE_PIES_SUMMARY],
+            ): bool,
+            vol.Required(
+                FEATURE_PER_PIE_ENTITIES,
+                default=suggested[FEATURE_PER_PIE_ENTITIES],
+            ): bool,
+            vol.Required(
+                FEATURE_DIVIDENDS_SUMMARY,
+                default=suggested[FEATURE_DIVIDENDS_SUMMARY],
+            ): bool,
+            vol.Required(
+                FEATURE_ORDERS_SUMMARY,
+                default=suggested[FEATURE_ORDERS_SUMMARY],
+            ): bool,
+            vol.Required(
+                FEATURE_MOVERS_DAILY,
+                default=suggested[FEATURE_MOVERS_DAILY],
+            ): bool,
+        }
+    )
+
+
+def _normalise_feature_options(options: Any) -> dict[str, bool]:
+    """Return feature options with account summary forced on."""
+    normalised = dict(DEFAULT_FEATURE_OPTIONS)
+    if isinstance(options, dict):
+        for key in FEATURE_OPTIONS:
+            if key in options:
+                normalised[key] = bool(options[key])
+    normalised[FEATURE_ACCOUNT_SUMMARY] = True
+    return normalised
 
 
 def _normalise_account_label(value: Any) -> str | None:

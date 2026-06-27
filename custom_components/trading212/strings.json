@@ -25,6 +25,24 @@
       "already_configured": "This Trading 212 account is already configured."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Trading 212 feature groups",
+        "description": "Control read-only feature groups. High-volume per-item entity groups are off by default.",
+        "data": {
+          "account_summary": "Account summary",
+          "positions_summary": "Positions summary",
+          "per_position_entities": "Per-position entities",
+          "pies_summary": "Pies summary",
+          "per_pie_entities": "Per-pie entities",
+          "dividends_summary": "Dividends summary",
+          "orders_summary": "Orders summary",
+          "movers_daily": "Movers and daily movement"
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "account_value": {
@@ -65,6 +83,60 @@
       },
       "biggest_daily_loss_value": {
         "name": "Biggest daily loss value"
+      },
+      "largest_position": {
+        "name": "Largest position"
+      },
+      "largest_position_value": {
+        "name": "Largest position value"
+      },
+      "largest_position_percentage": {
+        "name": "Largest position percentage"
+      },
+      "top_5_position_concentration_percentage": {
+        "name": "Top 5 position concentration"
+      },
+      "positions_in_profit": {
+        "name": "Positions in profit"
+      },
+      "positions_in_loss": {
+        "name": "Positions in loss"
+      },
+      "total_unrealised_result": {
+        "name": "Total unrealised result"
+      },
+      "best_position": {
+        "name": "Best position"
+      },
+      "best_position_result": {
+        "name": "Best position result"
+      },
+      "worst_position": {
+        "name": "Worst position"
+      },
+      "worst_position_result": {
+        "name": "Worst position result"
+      },
+      "pies_count": {
+        "name": "Pies count"
+      },
+      "total_pies_value": {
+        "name": "Total pies value"
+      },
+      "total_pies_cash": {
+        "name": "Total pies cash"
+      },
+      "total_pies_result": {
+        "name": "Total pies result"
+      },
+      "largest_pie": {
+        "name": "Largest pie"
+      },
+      "largest_pie_value": {
+        "name": "Largest pie value"
+      },
+      "last_pie_update_time": {
+        "name": "Last pie update time"
       },
       "last_update": {
         "name": "Last update"

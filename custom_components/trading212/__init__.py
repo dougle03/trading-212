@@ -40,6 +40,7 @@ async def async_setup_entry(
         update_interval_seconds=int(
             entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         ),
+        feature_options=dict(entry.options),
     )
 
     await coordinator.async_initialize()
@@ -51,6 +52,7 @@ async def async_setup_entry(
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
 
@@ -66,3 +68,11 @@ async def async_unload_entry(
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
     return unload_ok
+
+
+async def _async_update_listener(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Reload the entry when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)

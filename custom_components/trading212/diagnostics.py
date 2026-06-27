@@ -36,8 +36,11 @@ async def async_get_config_entry_diagnostics(
         coordinator_data = {
             "has_summary": bool(coordinator.data.get("summary")),
             "open_positions": coordinator.data.get("open_positions"),
+            "pies_count": coordinator.data.get("pies_count"),
             "last_update": coordinator.data.get("last_update"),
             "currency": coordinator.data.get("currency"),
+            "feature_options": getattr(coordinator, "feature_options", {}),
+            "endpoint_groups": getattr(coordinator, "endpoint_group_status", {}),
         }
 
     return {

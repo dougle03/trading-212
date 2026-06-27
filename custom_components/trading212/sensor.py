@@ -17,7 +17,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_ACCOUNT_LABEL, DEFAULT_ACCOUNT_LABEL, DOMAIN
+from .const import (
+    CONF_ACCOUNT_LABEL,
+    DEFAULT_ACCOUNT_LABEL,
+    DOMAIN,
+    FEATURE_MOVERS_DAILY,
+    FEATURE_PIES_SUMMARY,
+    FEATURE_POSITIONS_SUMMARY,
+)
 from .coordinator import Trading212DataUpdateCoordinator
 
 
@@ -27,6 +34,7 @@ class Trading212SensorEntityDescription(SensorEntityDescription):
 
     value_key: str
     attributes_key: str | None = None
+    feature_option: str | None = None
 
 
 SENSOR_DESCRIPTIONS: tuple[Trading212SensorEntityDescription, ...] = (
@@ -77,6 +85,7 @@ SENSOR_DESCRIPTIONS: tuple[Trading212SensorEntityDescription, ...] = (
         translation_key="open_positions",
         value_key="open_positions",
         state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
     ),
     Trading212SensorEntityDescription(
         key="daily_gain_loss",
@@ -85,6 +94,7 @@ SENSOR_DESCRIPTIONS: tuple[Trading212SensorEntityDescription, ...] = (
         attributes_key="daily_gain_loss_attrs",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_MOVERS_DAILY,
     ),
     Trading212SensorEntityDescription(
         key="daily_gain_loss_percent",
@@ -93,30 +103,185 @@ SENSOR_DESCRIPTIONS: tuple[Trading212SensorEntityDescription, ...] = (
         attributes_key="daily_gain_loss_percent_attrs",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_MOVERS_DAILY,
     ),
     Trading212SensorEntityDescription(
         key="top_daily_mover",
         translation_key="top_daily_mover",
         value_key="top_daily_mover",
         attributes_key="top_daily_mover_attrs",
+        feature_option=FEATURE_MOVERS_DAILY,
     ),
     Trading212SensorEntityDescription(
         key="bottom_daily_mover",
         translation_key="bottom_daily_mover",
         value_key="bottom_daily_mover",
         attributes_key="bottom_daily_mover_attrs",
+        feature_option=FEATURE_MOVERS_DAILY,
     ),
     Trading212SensorEntityDescription(
         key="biggest_daily_gain_value",
         translation_key="biggest_daily_gain_value",
         value_key="biggest_daily_gain_value",
         attributes_key="biggest_daily_gain_value_attrs",
+        feature_option=FEATURE_MOVERS_DAILY,
     ),
     Trading212SensorEntityDescription(
         key="biggest_daily_loss_value",
         translation_key="biggest_daily_loss_value",
         value_key="biggest_daily_loss_value",
         attributes_key="biggest_daily_loss_value_attrs",
+        feature_option=FEATURE_MOVERS_DAILY,
+    ),
+    Trading212SensorEntityDescription(
+        key="largest_position",
+        translation_key="largest_position",
+        value_key="largest_position",
+        attributes_key="largest_position_attrs",
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="largest_position_value",
+        translation_key="largest_position_value",
+        value_key="largest_position_value",
+        attributes_key="largest_position_value_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="largest_position_percentage",
+        translation_key="largest_position_percentage",
+        value_key="largest_position_percentage",
+        attributes_key="largest_position_percentage_attrs",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="top_5_position_concentration_percentage",
+        translation_key="top_5_position_concentration_percentage",
+        value_key="top_5_position_concentration_percentage",
+        attributes_key="top_5_position_concentration_percentage_attrs",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="positions_in_profit",
+        translation_key="positions_in_profit",
+        value_key="positions_in_profit",
+        attributes_key="positions_in_profit_attrs",
+        state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="positions_in_loss",
+        translation_key="positions_in_loss",
+        value_key="positions_in_loss",
+        attributes_key="positions_in_loss_attrs",
+        state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="total_unrealised_result",
+        translation_key="total_unrealised_result",
+        value_key="total_unrealised_result",
+        attributes_key="total_unrealised_result_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="best_position",
+        translation_key="best_position",
+        value_key="best_position",
+        attributes_key="best_position_attrs",
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="best_position_result",
+        translation_key="best_position_result",
+        value_key="best_position_result",
+        attributes_key="best_position_result_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="worst_position",
+        translation_key="worst_position",
+        value_key="worst_position",
+        attributes_key="worst_position_attrs",
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="worst_position_result",
+        translation_key="worst_position_result",
+        value_key="worst_position_result",
+        attributes_key="worst_position_result_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_POSITIONS_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="pies_count",
+        translation_key="pies_count",
+        value_key="pies_count",
+        attributes_key="pies_count_attrs",
+        state_class=SensorStateClass.MEASUREMENT,
+        feature_option=FEATURE_PIES_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="total_pies_value",
+        translation_key="total_pies_value",
+        value_key="total_pies_value",
+        attributes_key="total_pies_value_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_PIES_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="total_pies_cash",
+        translation_key="total_pies_cash",
+        value_key="total_pies_cash",
+        attributes_key="total_pies_cash_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_PIES_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="total_pies_result",
+        translation_key="total_pies_result",
+        value_key="total_pies_result",
+        attributes_key="total_pies_result_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_PIES_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="largest_pie",
+        translation_key="largest_pie",
+        value_key="largest_pie",
+        attributes_key="largest_pie_attrs",
+        feature_option=FEATURE_PIES_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="largest_pie_value",
+        translation_key="largest_pie_value",
+        value_key="largest_pie_value",
+        attributes_key="largest_pie_value_attrs",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+        feature_option=FEATURE_PIES_SUMMARY,
+    ),
+    Trading212SensorEntityDescription(
+        key="last_pie_update_time",
+        translation_key="last_pie_update_time",
+        value_key="last_pie_update_time",
+        attributes_key="last_pie_update_time_attrs",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        feature_option=FEATURE_PIES_SUMMARY,
     ),
     Trading212SensorEntityDescription(
         key="last_update",
@@ -144,7 +309,18 @@ async def async_setup_entry(
     async_add_entities(
         Trading212Sensor(coordinator, entry, account_label, description)
         for description in SENSOR_DESCRIPTIONS
+        if _sensor_enabled(coordinator, description)
     )
+
+
+def _sensor_enabled(
+    coordinator: Trading212DataUpdateCoordinator,
+    description: Trading212SensorEntityDescription,
+) -> bool:
+    """Return whether a sensor should be added for the current feature options."""
+    if description.feature_option is None:
+        return True
+    return bool(coordinator.feature_options.get(description.feature_option))
 
 
 class Trading212Sensor(CoordinatorEntity[Trading212DataUpdateCoordinator], SensorEntity):
