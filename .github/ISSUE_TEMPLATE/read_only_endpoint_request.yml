@@ -1,63 +1,24 @@
-name: Read-only endpoint request
-description: Request support for additional Trading 212 API data without account mutation.
+name: Read-only API data request
+description: Request support for additional read-only Trading 212 API data.
 labels: [enhancement, api]
 body:
   - type: input
     id: endpoint
     attributes:
-      label: API endpoint name or docs link
-      placeholder: Endpoint name or documentation URL
+      label: Read-only endpoint or data
     validations:
       required: true
   - type: textarea
-    id: data
+    id: use
     attributes:
-      label: What data it returns
-      placeholder: Summarize the fields or response shape.
-    validations:
-      required: true
-  - type: textarea
-    id: entity
-    attributes:
-      label: Suggested Home Assistant entity or sensor representation
-      placeholder: How should this appear in Home Assistant?
-    validations:
-      required: true
-  - type: dropdown
-    id: pagination
-    attributes:
-      label: Is pagination needed?
-      options:
-        - "Yes"
-        - "No"
-        - "Not sure"
-    validations:
-      required: true
-  - type: input
-    id: frequency
-    attributes:
-      label: Update frequency expectations
-      placeholder: e.g. every 15 minutes, daily, on startup
-    validations:
-      required: true
-  - type: textarea
-    id: privacy
-    attributes:
-      label: Privacy or sensitivity concerns
-      placeholder: Note any sensitive account or personal data concerns.
-    validations:
-      required: true
-  - type: textarea
-    id: bloat
-    attributes:
-      label: Entity bloat risk
-      placeholder: Explain whether this data should be summarized or opt-in.
+      label: Home Assistant use
+      description: Describe the sensor or summary value requested.
     validations:
       required: true
   - type: checkboxes
-    id: scope_check
+    id: scope
     attributes:
       label: Scope check
       options:
-        - label: The endpoint is read-only and does not mutate the Trading 212 account.
+        - label: The requested data is read-only and does not mutate a Trading 212 account.
           required: true

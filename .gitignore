@@ -1,4 +1,4 @@
-# Python
+# Python/cache/test artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -6,17 +6,25 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+build/
+dist/
+*.egg-info/
 
 # Virtual environments
 .venv/
 venv/
 
-# Secrets / local config
+# Home Assistant, secrets, and local files
+.storage/
+deps/
+tts/
+*.db
+*.log
 .env
 *.secret
 secrets.yaml
 
-# OS / editor
+# OS/editor files
 .DS_Store
 .vscode/
 .idea/
@@ -30,8 +38,6 @@ docs/APP_PORTABILITY_STANDARD.md
 docs/APP_SECURITY_STANDARD.md
 docs/GUI_LAYOUT_WORKFLOW_STANDARD.md
 docs/TRADING212_PROJECT_NOTES.md
-
-# Local/internal notes
 docs/*_PROJECT_NOTES_INTERNAL.md
 docs/*_INTERNAL.md
 docs/internal/

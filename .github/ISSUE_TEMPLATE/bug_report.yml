@@ -6,81 +6,33 @@ body:
     id: ha_version
     attributes:
       label: Home Assistant version
-      placeholder: "e.g. 2026.6.0"
     validations:
       required: true
   - type: input
     id: integration_version
     attributes:
       label: Integration version
-      placeholder: "e.g. 2026.06.2"
-    validations:
-      required: true
-  - type: dropdown
-    id: install_method
-    attributes:
-      label: Install method
-      options:
-        - HACS custom repo
-        - Manual copy
-        - Other
-    validations:
-      required: true
-  - type: dropdown
-    id: account_type
-    attributes:
-      label: Trading 212 account type
-      options:
-        - Live account
-        - Demo account
     validations:
       required: true
   - type: textarea
-    id: happened
+    id: problem
     attributes:
-      label: What happened
-      description: Describe the issue as observed.
-      placeholder: What did you see?
-    validations:
-      required: true
-  - type: textarea
-    id: expected
-    attributes:
-      label: What was expected
-      description: Describe the expected read-only behaviour.
-      placeholder: What should have happened?
+      label: Problem
+      description: Describe what happened and what you expected.
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
       label: Relevant logs
-      description: Paste logs with API keys, secrets, and account data removed.
+      description: Remove API keys, secrets, account identifiers, balances, positions, and other private account data.
       render: text
     validations:
-      required: true
-  - type: textarea
-    id: diagnostics
-    attributes:
-      label: Diagnostics
-      description: Confirm whether diagnostics were checked, but do not paste secrets or private account data.
-      placeholder: Diagnostics checked / attached with secrets removed.
-    validations:
-      required: true
-  - type: dropdown
-    id: after_update
-    attributes:
-      label: Did this start after an update?
-      options:
-        - "Yes"
-        - "No"
-        - "Not sure"
-    validations:
-      required: true
+      required: false
   - type: checkboxes
-    id: safety_check
+    id: safety
     attributes:
       label: Safety check
       options:
-        - label: I have removed any API key, API secret, token, or other sensitive account data from this report.
+        - label: I have removed secrets and private account data from this report.
           required: true
