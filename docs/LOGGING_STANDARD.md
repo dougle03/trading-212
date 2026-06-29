@@ -19,11 +19,23 @@ Read order:
 2. LOGGING_PROJECT_NOTES.md
 ```
 
+## Applicability
+
+This standard primarily applies to standalone applications and services.
+
+It is especially relevant where the project has its own application database, background workers, scheduled jobs, import/export flows, Docker runtime, or direct operational responsibility.
+
+Hosted or plugin-style projects should normally use the host platform's logging mechanism rather than creating their own separate log files. This includes Home Assistant custom integrations.
+
+For Home Assistant integrations, runtime diagnostics should normally go through Python logging and Home Assistant's logging framework, not a project-owned path such as `/logs/app.log`.
+
+The core requirement is that runtime diagnostic logging must not depend solely on the project's own application database.
+
 ## Runtime Logs
 
-Runtime errors, warnings, tracebacks, startup failures, and operational diagnostics must be written to plain log files outside the application database.
+Standalone applications must write runtime errors, warnings, tracebacks, startup failures, and operational diagnostics outside the application database, using plain log files, stdout/stderr, or the host/container logging system as appropriate.
 
-Docker stdout and stderr are allowed and encouraged for runtime logging. Where logs need to survive container replacement, restart, or host reboot, the project should define a mounted log directory or an equivalent host-side collection path.
+Docker stdout and stderr are allowed and encouraged for runtime logging. Where standalone app logs need to survive container replacement, restart, or host reboot, the project should define a mounted log directory or an equivalent host-side collection path.
 
 Runtime logging must not depend solely on database writes.
 
@@ -37,27 +49,27 @@ The database is acceptable for application records such as:
 - queue or workflow state
 - business records
 
-These records can supplement runtime logs, but they are not a replacement for file or stdout/stderr diagnostics.
+These records can supplement runtime logs, but they are not a replacement for file, stdout/stderr, host platform, or container diagnostics.
 
 ## Rationale
 
 During failures, the database itself may be unavailable, locked, corrupt, full, misconfigured, or undergoing migration.
 
-If runtime logging exists only in the database, the application can become blind exactly when diagnostics are most needed. Plain log files and Docker stdout/stderr give operators a separate failure channel for startup errors, tracebacks, configuration mistakes, dependency failures, and database access problems.
+If runtime logging exists only in the database, the application can become blind exactly when diagnostics are most needed. Plain log files, Docker stdout/stderr, host platform logging, and container logging give operators a separate failure channel for startup errors, tracebacks, configuration mistakes, dependency failures, and database access problems.
 
 ## Flask Guidance
 
-Flask applications should define an application log file or log directory per app where practical.
+Standalone Flask applications should define an application log file, log directory, stdout/stderr logging, or host/container logging path per app where practical.
 
 Recommended baseline:
 
 - configure Python logging during app startup, before database initialization where possible
-- write runtime errors, warnings, startup diagnostics, and unhandled exception tracebacks to a file handler and/or stdout/stderr
+- write runtime errors, warnings, startup diagnostics, and unhandled exception tracebacks to a file handler, stdout/stderr, or the host/container logging system
 - include timestamps, severity, source or module where practical, and a clear message
 - include full tracebacks for unhandled exceptions
 - keep database audit or history writes separate from runtime diagnostics
 
-For small local tools, Docker stdout/stderr may be enough if container logs are retained by the deployment. For production-like or long-lived tools, define a mounted log directory such as `./logs:/app/logs` or another project-specific host path.
+For small local tools, Docker stdout/stderr may be enough if container logs are retained by the deployment. For production-like or long-lived standalone tools, define a mounted log directory such as `./logs:/app/logs` or another project-specific host path where persistent file logs are needed.
 
 ## Docker Guidance
 
