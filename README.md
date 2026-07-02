@@ -2,6 +2,9 @@
 
 A read-only Home Assistant custom integration for basic Trading 212 account and portfolio monitoring.
 
+Pre-requisit: You must have an existing Trading 212 account. If you don't already have one, use my link below and we both benefit.
+https://www.trading212.com/invite/4DpK9korH3y
+
 This project is not affiliated with, endorsed by, or supported by Trading 212.
 
 ## Install
